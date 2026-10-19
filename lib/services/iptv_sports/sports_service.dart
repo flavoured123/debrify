@@ -351,6 +351,7 @@ class SportsService {
       }
       for (final p in schedule) {
         if (!p.stop.isAfter(now) || p.start.isAfter(until)) continue;
+        if (sportsTitleIsOffAir(p.title)) continue;
         final sport = _sportFor(g, p.title, prefs);
         if (sport == null) continue;
         raw.add(

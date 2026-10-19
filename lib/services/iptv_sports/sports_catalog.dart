@@ -726,6 +726,41 @@ bool sportsTitleHasTeam(String title, List<String> teams) {
 bool sportsTitleLooksLikeReplay(String title) =>
     sportsContainsAny(sportsNormalize(title), kSportsReplayWords);
 
+/// Guide placeholders that mean "nothing on air" (German "Sendepause",
+/// "Programmpause", English "off air", "closedown", "no programme"...).
+/// Such slots must never show up as a LIVE match.
+bool sportsTitleIsOffAir(String title) {
+  final t = title.trim().toLowerCase();
+  if (t.isEmpty) return true;
+  const exact = {
+    'sendepause',
+    'programmpause',
+    'sendeschluss',
+    'kein programm',
+    'keine sendung',
+    'off air',
+    'offair',
+    'closedown',
+    'close down',
+    'no programme',
+    'no program',
+    'no information',
+    'no programme information',
+    'to be announced',
+    'tba',
+    'tbd',
+    'pause',
+    'break',
+    'testbild',
+  };
+  if (exact.contains(t)) return true;
+  return t.startsWith('sendepause') ||
+      t.startsWith('programmpause') ||
+      t.startsWith('off air') ||
+      t.contains('no programme information') ||
+      t.contains('no program information');
+}
+
 /// Turns one catalog row into a [SportsChannel], or null when it does not look
 /// like sports at all. [fromSportsCategory] marks rows found by walking a
 /// sports-looking folder, which are at least multi-sport.

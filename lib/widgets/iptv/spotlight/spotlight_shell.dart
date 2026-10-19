@@ -42,6 +42,11 @@ class SpotlightShell extends StatelessWidget {
   final double railWidth;
   final EdgeInsetsGeometry padding;
 
+  /// Optional always-visible folder column (wide layout only), placed
+  /// between the source rail and the hero/guide column.
+  final Widget? folderSlot;
+  final double folderWidth;
+
   const SpotlightShell({
     super.key,
     required this.mode,
@@ -64,6 +69,8 @@ class SpotlightShell extends StatelessWidget {
     this.onOpenSearch,
     this.railWidth = 236,
     this.padding = const EdgeInsets.all(12),
+    this.folderSlot,
+    this.folderWidth = 260,
   }) : assert(
          mode != IptvSpotlightLayoutMode.classic,
          'Classic canvases must use the existing IPTV result view.',
@@ -95,28 +102,48 @@ class SpotlightShell extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 76),
-            child: Column(
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  // The guide benefits more from vertical space than the
-                  // programme hero: this adds roughly one full channel row
-                  // on a 540p logical TV canvas while the hero's dense mode
-                  // keeps its preview, title and metadata legible.
-                  flex: 4,
+                // Always present (width 0 without folders) so toggling the
+                // column never reparents the hero's native preview surface.
+                SizedBox(
+                  width: folderSlot == null ? 0 : folderWidth,
                   child: KeyedSubtree(
-                    key: const ValueKey<String>('spotlight-hero-slot'),
-                    child: heroSlot,
+                    key: const ValueKey<String>('spotlight-folder-slot'),
+                    child: folderSlot ?? const SizedBox.shrink(),
                   ),
                 ),
-                const SizedBox(height: 8),
-                _topControls(),
-                const SizedBox(height: 8),
+                SizedBox(width: folderSlot == null ? 0 : 10),
                 Expanded(
-                  flex: 6,
-                  child: KeyedSubtree(
-                    key: const ValueKey<String>('spotlight-content-slot'),
-                    child: contentSlot,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        // The guide benefits more from vertical space than
+                        // the programme hero: this adds roughly one full
+                        // channel row on a 540p logical TV canvas while the
+                        // hero's dense mode keeps its preview, title and
+                        // metadata legible.
+                        flex: 4,
+                        child: KeyedSubtree(
+                          key: const ValueKey<String>('spotlight-hero-slot'),
+                          child: heroSlot,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _topControls(),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        flex: 6,
+                        child: KeyedSubtree(
+                          key: const ValueKey<String>(
+                            'spotlight-content-slot',
+                          ),
+                          child: contentSlot,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],

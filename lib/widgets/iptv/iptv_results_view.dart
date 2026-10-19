@@ -67,6 +67,8 @@ import 'styles/iptv_style.dart';
 import 'spotlight/iptv_spotlight_layout.dart';
 import 'spotlight/spotlight_category_control.dart';
 import 'spotlight/spotlight_content_type_control.dart';
+import 'spotlight/spotlight_folder_sidebar.dart';
+import 'spotlight/spotlight_poster_card.dart';
 import 'spotlight/spotlight_live_timeline.dart';
 import 'spotlight/spotlight_programme_hero.dart';
 import 'spotlight/spotlight_rail.dart';
@@ -3276,6 +3278,21 @@ class IptvResultsViewState extends State<IptvResultsView>
               ).pop(isDefault ? 'clearDefault' : 'setDefault'),
             ),
             ListTile(
+              leading: Icon(
+                _pinnedFolders.contains(category)
+                    ? Icons.push_pin_outlined
+                    : Icons.push_pin_rounded,
+                color: app.core.tx,
+              ),
+              title: Text(
+                _pinnedFolders.contains(category)
+                    ? 'Unpin folder'
+                    : 'Pin folder to the top',
+                style: TextStyle(color: app.core.tx),
+              ),
+              onTap: () => Navigator.of(dialogContext).pop('pin'),
+            ),
+            ListTile(
               leading: Icon(Icons.visibility_off_outlined, color: app.core.tx),
               title: Text(
                 'Hide category…',
@@ -3289,6 +3306,8 @@ class IptvResultsViewState extends State<IptvResultsView>
     );
     if (!mounted) return;
     switch (action) {
+      case 'pin':
+        unawaited(_togglePinnedFolder(category));
       case 'setDefault':
         if (IptvCatalogDb.setDefaultCategory(snap.catalogKey, category)) {
           _showChip(
@@ -6367,7 +6386,7 @@ class IptvResultsViewState extends State<IptvResultsView>
             case TraversalDirection.up:
               _focusSpotlightSearchOrExit();
             case TraversalDirection.left:
-              _focusSpotlightSources();
+              _focusFoldersOrSources();
             case TraversalDirection.right:
               break;
           }
@@ -6394,6 +6413,104 @@ class IptvResultsViewState extends State<IptvResultsView>
       onSourceDown: _focusSpotlightHero,
       railWidth: 244,
       padding: EdgeInsets.all(mode == IptvSpotlightLayoutMode.wide ? 10 : 8),
+      folderSlot: _buildFolderSidebar(mode),
+      folderWidth: 252,
+    );
+  }
+
+  // ---- Folder column (modern layout) ----------------------------------------
+
+  final SpotlightFolderSidebarController _folderSidebar =
+      SpotlightFolderSidebarController();
+
+  /// Pinned folders of the current source + content type, and the key they
+  /// were loaded for (so a source switch reloads them).
+  Set<String> _pinnedFolders = const {};
+  String? _pinnedFoldersKey;
+
+  String? get _folderPinKey {
+    final selected = _selectedPlaylist;
+    if (selected == null || selected.isVirtual) return null;
+    return 'iptv_pinned_folders::${selected.id}::$_selectedContentType';
+  }
+
+  void _ensurePinnedFoldersLoaded() {
+    final key = _folderPinKey;
+    if (key == _pinnedFoldersKey) return;
+    _pinnedFoldersKey = key;
+    _pinnedFolders = const {};
+    if (key == null) return;
+    unawaited(() async {
+      try {
+        final prefs = await ProfilePreferences.instance();
+        final list = prefs.getStringList(key) ?? const <String>[];
+        if (!mounted || _pinnedFoldersKey != key) return;
+        setState(() => _pinnedFolders = list.toSet());
+      } catch (_) {}
+    }());
+  }
+
+  Future<void> _togglePinnedFolder(String category) async {
+    final key = _folderPinKey;
+    if (key == null) return;
+    final next = Set<String>.of(_pinnedFolders);
+    final pinned = !next.remove(category);
+    if (pinned) next.add(category);
+    setState(() => _pinnedFolders = next);
+    try {
+      final prefs = await ProfilePreferences.instance();
+      await prefs.setStringList(key, next.toList());
+    } catch (_) {}
+    if (!mounted) return;
+    _showChip(
+      _CatalogChipState.success,
+      pinned ? 'Pinned "$category" to the top' : 'Unpinned "$category"',
+      autoHide: const Duration(milliseconds: 2200),
+    );
+  }
+
+  /// LEFT from the hero, controls or guide: the folder column when it is on
+  /// screen, otherwise the sources rail as before.
+  void _focusFoldersOrSources() {
+    if (_spotlightLayoutMode == IptvSpotlightLayoutMode.wide &&
+        _folderSidebar.focusSelected()) {
+      return;
+    }
+    _focusSpotlightSources();
+  }
+
+  Widget? _buildFolderSidebar(IptvSpotlightLayoutMode mode) {
+    if (mode != IptvSpotlightLayoutMode.wide) return null;
+    final selected = _selectedPlaylist;
+    if (selected == null || selected.isVirtual) return null;
+    _ensurePinnedFoldersLoaded();
+    if (_categories.isEmpty) {
+      // Keep the column while a source is loading so the layout does not
+      // jump when its folders arrive.
+      if (!_isLoading) return null;
+    }
+    return SpotlightFolderSidebar(
+      categories: _categories,
+      counts: _categoryCounts,
+      selected: _effectiveCategory,
+      allCount: _allChannels.length,
+      pinned: _pinnedFolders,
+      controller: _folderSidebar,
+      allLabel: switch (_selectedContentType) {
+        'movies' || 'vod' => 'All movies',
+        'series' => 'All series',
+        _ => 'All channels',
+      },
+      onSelect: _onCategoryChanged,
+      onOptions: _canShowCategoryOptions
+          ? (category) => unawaited(_promptCategoryOptions(category))
+          : (category) => unawaited(_togglePinnedFolder(category)),
+      onSearch: _categories.isEmpty
+          ? null
+          : () => unawaited(_showSpotlightCategoryPicker()),
+      onExitRight: _focusSpotlightContentEntry,
+      onExitLeft: _focusSpotlightSources,
+      onExitUp: _focusSpotlightHero,
     );
   }
 
@@ -6468,7 +6585,7 @@ class IptvResultsViewState extends State<IptvResultsView>
           (_contentTypeFocusNode.hasFocus ||
               (!(_selectedPlaylist?.isXtreamCodes ?? false) &&
                   _categoryFilterFocusNode.hasFocus))) {
-        _focusSpotlightSources();
+        _focusFoldersOrSources();
         return KeyEventResult.handled;
       }
       return KeyEventResult.ignored;
@@ -7180,7 +7297,7 @@ class IptvResultsViewState extends State<IptvResultsView>
           epgContextVersion: epgVersion,
           onSelectionChanged: _onSpotlightSelection,
           onExitUp: () => _categoryFilterFocusNode.requestFocus(),
-          onExitLeft: _focusSpotlightSources,
+          onExitLeft: _focusFoldersOrSources,
           onChannelActions: (entry) => _showSpotlightChannelActions(
             entry.channel,
             programme: _spotlightProgrammeShown.value,
@@ -8572,7 +8689,17 @@ class IptvResultsViewState extends State<IptvResultsView>
         ? kIptvNarrowRowExtent
         : kIptvRowExtent;
 
-    final Widget channelBrowser = touchSelector
+    // Modern layout: Movies / Series as real poster cards instead of rows.
+    final posterCards =
+        tvPane &&
+        !cockpit &&
+        !touchSelector &&
+        _showsPosterRows &&
+        _spotlightLayoutMode != IptvSpotlightLayoutMode.classic;
+
+    final Widget channelBrowser = posterCards
+        ? _buildPosterCardGrid(hPadding: hPadding, padRight: padRight)
+        : touchSelector
         ? _buildTabletCenteredSelector(
             _filteredChannels,
             rowExtent: rowExtent,
@@ -8741,6 +8868,66 @@ class IptvResultsViewState extends State<IptvResultsView>
         buildProgressiveStatus(),
         Expanded(child: channelBrowser),
       ],
+    );
+  }
+
+  /// Poster-card grid for Movies / Series (modern Spotlight layout).
+  Widget _buildPosterCardGrid({
+    required double hPadding,
+    required double padRight,
+  }) {
+    const maxTileWidth = 172.0;
+    const spacing = 16.0;
+    // Poster (2:3) plus one title line underneath.
+    const aspect = 0.6;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final crossExtent = math.max(
+          1.0,
+          constraints.maxWidth - hPadding - padRight,
+        );
+        final columns = math.max(
+          1,
+          (crossExtent / (maxTileWidth + spacing)).ceil(),
+        );
+        final tileWidth = (crossExtent - (columns - 1) * spacing) / columns;
+        final channelList = _filteredChannels;
+        _gridColumns = columns;
+        _gridRowExtent = tileWidth / aspect + spacing;
+        return FocusTraversalGroup(
+          child: GridView.builder(
+            controller: _scrollController,
+            padding: EdgeInsets.fromLTRB(hPadding, 12, padRight, 28),
+            gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: maxTileWidth,
+              childAspectRatio: aspect,
+              mainAxisSpacing: spacing,
+              crossAxisSpacing: spacing,
+            ),
+            itemCount: channelList.length,
+            itemBuilder: (context, index) {
+              final channel = channelList[index];
+              final continueShelf =
+                  _selectedPlaylist?.isContinueWatching ?? false;
+              return SpotlightPosterCard(
+                key: ObjectKey(channel),
+                channel: channel,
+                focusNode: _focusNodeFor(channel),
+                onTap: () => _playChannel(channel),
+                onHold: continueShelf
+                    ? () => _showContinueWatchingActions(channel)
+                    : channel.contentType == 'series'
+                    ? null
+                    : () => _openListPicker(channel),
+                onFocused: () => _onChannelFocused(channel),
+                onDetached: () => _onRowDetached(channel),
+                progress: _progressByUrl[channel.url],
+                isFavorited: _favoriteUrls.contains(channel.url),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
