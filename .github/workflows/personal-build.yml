@@ -9,8 +9,9 @@
 # Output:
 #   * Android APK attached to the release "personal-android" — a fixed,
 #     direct download link that the Fire TV "Downloader" app can open.
-#   * Windows portable ZIP attached to the release "personal-windows"
-#     (manual runs only).
+#   * Windows installer + portable ZIP attached to the release
+#     "personal-windows" (own name and data folders, separate from the
+#     official Debrify for Windows).
 #
 # Optional repository secrets (Settings → Secrets and variables → Actions):
 #   TMDB_READ_ACCESS_TOKEN  movie/show artwork. Not needed for IPTV.
@@ -39,6 +40,7 @@ on:
       - 'android/**'
       - 'pubspec.yaml'
       - 'pubspec.lock'
+      - 'windows/**'
       - '.github/workflows/personal-build.yml'
 
 concurrency:
@@ -69,6 +71,8 @@ env:
     lib/services/iptv_vod_info_service.dart
     lib/services/iptv_extra_guides.dart
     lib/widgets/iptv/iptv_sources_sheet.dart
+    lib/screens/collections/collection_editor_screen.dart
+    lib/utils/app_storage.dart
 
 jobs:
   android:
@@ -194,6 +198,7 @@ jobs:
         run: >-
           flutter build apk --release
           --dart-define=DEBRIFY_LOCAL_VALIDATION=false
+          --dart-define=DEBRIFY_PERSONAL_BUILD=true
           --dart-define-from-file="${{ runner.temp }}/debrify-build-config.json"
 
       - name: Name the APK
@@ -238,7 +243,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   windows:
-    if: github.event_name == 'workflow_dispatch' && (inputs.target == 'windows' || inputs.target == 'both')
+    if: github.event_name == 'push' || inputs.target == 'windows' || inputs.target == 'both'
     runs-on: windows-2022
     timeout-minutes: 90
 
@@ -257,6 +262,33 @@ jobs:
           config = Path(os.environ["RUNNER_TEMP"]) / "debrify-build-config.json"
           config.write_text(json.dumps({"TMDB_READ_ACCESS_TOKEN": token}), encoding="utf-8")
 
+      # Separate identity from the official Windows app:
+      #  * exe "DebrifyPersonal.exe", window title "Debrify Personal"
+      #  * ProductName "Debrify Personal" -> its own %APPDATA% / %LOCALAPPDATA%
+      #    folders (settings, databases, single-instance lock)
+      #  * DEBRIFY_PERSONAL_BUILD -> its own Documents\Debrify Personal folder
+      # Only this CI checkout is changed; the repository files stay upstream.
+      - name: Give the Windows app its own name and data folders
+        shell: python
+        run: |
+          from pathlib import Path
+          def edit(path, pairs):
+              f = Path(path)
+              text = f.read_text(encoding="utf-8")
+              for old, new in pairs:
+                  if old not in text:
+                      raise SystemExit(f"{path}: expected text not found: {old!r}")
+                  text = text.replace(old, new)
+              f.write_text(text, encoding="utf-8")
+          edit("windows/CMakeLists.txt", [('set(BINARY_NAME "debrify")', 'set(BINARY_NAME "DebrifyPersonal")')])
+          edit("windows/runner/Runner.rc", [
+              ('VALUE "FileDescription", "debrify"', 'VALUE "FileDescription", "Debrify Personal"'),
+              ('VALUE "InternalName", "debrify"', 'VALUE "InternalName", "DebrifyPersonal"'),
+              ('VALUE "OriginalFilename", "debrify.exe"', 'VALUE "OriginalFilename", "DebrifyPersonal.exe"'),
+              ('VALUE "ProductName", "debrify"', 'VALUE "ProductName", "Debrify Personal"'),
+          ])
+          edit("windows/runner/main.cpp", [('window.Create(L"debrify"', 'window.Create(L"Debrify Personal"')])
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -271,31 +303,59 @@ jobs:
         run: flutter pub get
 
       - name: Build Windows app
-        run: flutter build windows --release --dart-define=DEBRIFY_LOCAL_VALIDATION=false --dart-define-from-file="${{ runner.temp }}/debrify-build-config.json"
+        run: flutter build windows --release --dart-define=DEBRIFY_LOCAL_VALIDATION=false --dart-define=DEBRIFY_PERSONAL_BUILD=true --dart-define-from-file="${{ runner.temp }}/debrify-build-config.json"
 
-      - name: Zip portable app
+      # A fresh Windows 10/11 may lack the Visual C++ runtime. Shipping the
+      # three DLLs next to the exe makes the app start on any Windows 10/11
+      # x64 PC (and Windows 11 on ARM via x64 emulation) without installing
+      # anything else.
+      - name: Bundle the Visual C++ runtime
+        shell: pwsh
+        run: |
+          $release = "build\windows\x64\runner\Release"
+          if (-not (Test-Path "$release\DebrifyPersonal.exe")) { throw "DebrifyPersonal.exe was not built" }
+          foreach ($dll in "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll") {
+            Copy-Item "$env:WINDIR\System32\$dll" $release -Force
+          }
+          Get-ChildItem $release -Filter *.dll | Select-Object Name, Length | Format-Table
+
+      - name: Portable ZIP
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
-          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath out\Debrify-Personal-Windows.zip -Force
-          Get-Item out\Debrify-Personal-Windows.zip | Format-List Name,Length
+          New-Item -ItemType Directory -Force -Path "out\Debrify Personal" | Out-Null
+          Copy-Item build\windows\x64\runner\Release\* "out\Debrify Personal" -Recurse -Force
+          Compress-Archive -Path "out\Debrify Personal" -DestinationPath out\Debrify-Personal-Windows-Portable.zip -Force
 
-      - name: Upload ZIP (Actions artifact)
+      - name: Installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress --yes
+          $env:DEBRIFY_VERSION = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([^+\s]+)').Matches[0].Groups[1].Value
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\installer-personal.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
+          Copy-Item build\windows\installer\Debrify-Personal-Setup.exe out\ -Force
+          Get-ChildItem out -File | Select-Object Name, Length | Format-Table
+
+      - name: Upload (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: Debrify-Personal-windows
-          path: out/Debrify-Personal-Windows.zip
+          path: |
+            out/Debrify-Personal-Setup.exe
+            out/Debrify-Personal-Windows-Portable.zip
           retention-days: 14
 
-      - name: Publish ZIP to release "personal-windows"
+      - name: Publish to release "personal-windows"
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           gh release delete personal-windows --cleanup-tag --yes 2>/dev/null || true
-          gh release create personal-windows out/Debrify-Personal-Windows.zip \
+          gh release create personal-windows \
+            out/Debrify-Personal-Setup.exe out/Debrify-Personal-Windows-Portable.zip \
             --target "$GITHUB_SHA" \
             --prerelease \
             --title "Debrify Personal (Windows)" \
-            --notes "Portable build from commit ${GITHUB_SHA}. Unzip and run debrify.exe."
+            --notes "Build from commit ${GITHUB_SHA}. Debrify-Personal-Setup.exe installs next to the official Debrify with its own settings; the Portable ZIP runs without installing (DebrifyPersonal.exe)."
