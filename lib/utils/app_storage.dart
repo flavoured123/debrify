@@ -45,11 +45,33 @@ class AppStorage {
     _cache = null;
   }
 
+  /// True only in the "Debrify Personal" build (CI passes
+  /// --dart-define=DEBRIFY_PERSONAL_BUILD=true). Normal builds are unchanged.
+  static const bool personalBuild = bool.fromEnvironment(
+    'DEBRIFY_PERSONAL_BUILD',
+  );
+
   /// Replaces `getApplicationDocumentsDirectory()`.
+  ///
+  /// On Windows that is the user's shared Documents folder, so the official
+  /// Debrify and Debrify Personal would read each other's profiles and
+  /// databases. The personal build keeps its own subfolder instead. (Support
+  /// and cache folders are already separate via the exe's ProductName.)
   static Future<Directory> documents() async =>
       _documents ??= PlatformUtil.isTvOS
       ? await getApplicationCacheDirectory()
-      : await getApplicationDocumentsDirectory();
+      : await _personalWindowsDocuments(
+          await getApplicationDocumentsDirectory(),
+        );
+
+  static Future<Directory> _personalWindowsDocuments(Directory base) async {
+    if (!personalBuild || kIsWeb || !Platform.isWindows) return base;
+    final own = Directory(
+      '${base.path}${Platform.pathSeparator}Debrify Personal',
+    );
+    await own.create(recursive: true);
+    return own;
+  }
 
   /// Replaces `getApplicationSupportDirectory()`.
   static Future<Directory> support() async => _support ??= PlatformUtil.isTvOS

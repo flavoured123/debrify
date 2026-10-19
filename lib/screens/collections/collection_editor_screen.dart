@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/home_collection.dart';
 import '../../models/stremio_addon.dart';
+import '../../widgets/tv_text_field.dart';
 import '../settings/widgets/settings_widgets.dart';
 
 /// Edits a detached draft. The caller saves only after the user presses Save,
@@ -502,62 +503,130 @@ Widget _text(
   bool url = false,
   bool integer = false,
   bool decimal = false,
-}) => Padding(
-  padding: const EdgeInsets.symmetric(vertical: 8),
-  child: TextFormField(
-    initialValue: values[key]?.toString() ?? '',
-    decoration: InputDecoration(labelText: label),
-    keyboardType: url
-        ? TextInputType.url
-        : integer || decimal
-        ? const TextInputType.numberWithOptions(decimal: true)
-        : TextInputType.text,
-    onChanged: (value) => values[key] = value.trim(),
-    validator: (raw) {
-      final value = raw?.trim() ?? '';
-      if (value.isEmpty) return required ? 'Enter $label' : null;
-      if (url) {
-        final uri = Uri.tryParse(value);
-        if (uri == null ||
-            !const ['https', 'http'].contains(uri.scheme) ||
-            uri.host.isEmpty) {
-          return 'Enter an HTTP or HTTPS URL';
-        }
-      }
-      if (integer &&
-          (int.tryParse(value) == null ||
-              int.parse(value) < (key.endsWith('Id') ? 1 : 0))) {
-        return 'Enter a valid whole number';
-      }
-      if (decimal &&
-          (double.tryParse(value) == null ||
-              !double.parse(value).isFinite ||
-              double.parse(value) < 0 ||
-              double.parse(value) > 10)) {
-        return 'Enter a rating from 0 to 10';
-      }
-      if (key.startsWith('releaseDate') &&
-          (DateTime.tryParse(value)?.toIso8601String().substring(0, 10) !=
-                  value ||
-              !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value))) {
-        return 'Use YYYY-MM-DD';
-      }
-      return null;
-    },
-    onSaved: (raw) {
-      final value = raw?.trim() ?? '';
-      if (value.isEmpty) {
-        values.remove(key);
-      } else {
-        values[key] = integer
-            ? int.parse(value)
-            : decimal
-            ? double.parse(value)
-            : value;
-      }
-    },
-  ),
+}) => _DraftTextField(
+  values: values,
+  fieldKey: key,
+  label: label,
+  required: required,
+  url: url,
+  integer: integer,
+  decimal: decimal,
 );
+
+/// Remote-safe text field for the collection editors.
+///
+/// A plain [TextFormField] opens the system keyboard as soon as the DPAD lands
+/// on it and then swallows Up/Down, so on TV nothing below the first field
+/// (switches, folders, Remove buttons) could be reached. [TvTextField] is a
+/// focus "shell" on TV: OK starts editing, Back ends it, arrows move on.
+/// Validation and saving stay in a [FormField] so Save behaves as before.
+class _DraftTextField extends StatefulWidget {
+  const _DraftTextField({
+    required this.values,
+    required this.fieldKey,
+    required this.label,
+    required this.required,
+    required this.url,
+    required this.integer,
+    required this.decimal,
+  });
+
+  final Map<String, dynamic> values;
+  final String fieldKey;
+  final String label;
+  final bool required;
+  final bool url;
+  final bool integer;
+  final bool decimal;
+
+  @override
+  State<_DraftTextField> createState() => _DraftTextFieldState();
+}
+
+class _DraftTextFieldState extends State<_DraftTextField> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.values[widget.fieldKey]?.toString() ?? '',
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  String? _validate(String? raw) {
+    final key = widget.fieldKey;
+    final label = widget.label;
+    final value = raw?.trim() ?? '';
+    if (value.isEmpty) return widget.required ? 'Enter $label' : null;
+    if (widget.url) {
+      final uri = Uri.tryParse(value);
+      if (uri == null ||
+          !const ['https', 'http'].contains(uri.scheme) ||
+          uri.host.isEmpty) {
+        return 'Enter an HTTP or HTTPS URL';
+      }
+    }
+    if (widget.integer &&
+        (int.tryParse(value) == null ||
+            int.parse(value) < (key.endsWith('Id') ? 1 : 0))) {
+      return 'Enter a valid whole number';
+    }
+    if (widget.decimal &&
+        (double.tryParse(value) == null ||
+            !double.parse(value).isFinite ||
+            double.parse(value) < 0 ||
+            double.parse(value) > 10)) {
+      return 'Enter a rating from 0 to 10';
+    }
+    if (key.startsWith('releaseDate') &&
+        (DateTime.tryParse(value)?.toIso8601String().substring(0, 10) !=
+                value ||
+            !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value))) {
+      return 'Use YYYY-MM-DD';
+    }
+    return null;
+  }
+
+  void _save(String? raw) {
+    final values = widget.values;
+    final key = widget.fieldKey;
+    final value = raw?.trim() ?? '';
+    if (value.isEmpty) {
+      values.remove(key);
+    } else {
+      values[key] = widget.integer
+          ? int.parse(value)
+          : widget.decimal
+          ? double.parse(value)
+          : value;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: FormField<String>(
+      initialValue: _controller.text,
+      validator: _validate,
+      onSaved: _save,
+      builder: (field) => TvTextField(
+        controller: _controller,
+        labelText: widget.label,
+        errorText: field.errorText,
+        keyboardType: widget.url
+            ? TextInputType.url
+            : widget.integer || widget.decimal
+            ? const TextInputType.numberWithOptions(decimal: true)
+            : TextInputType.text,
+        onChanged: (value) {
+          field.didChange(value);
+          widget.values[widget.fieldKey] = value.trim();
+        },
+      ),
+    ),
+  );
+}
 
 Widget _choice(
   Map<String, dynamic> values,
