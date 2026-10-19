@@ -11,6 +11,7 @@ import 'package:xml/xml_events.dart';
 
 import 'iptv_catalog_db.dart';
 import 'iptv_load_phase.dart';
+import '../utils/iptv_name_tags.dart';
 
 /// The filtered guide for one playlist: programmes per XMLTV channel id,
 /// plus the name→id resolutions the parser made for channels that matched by
@@ -111,6 +112,106 @@ class XmltvEpgSource {
   static String normalizeChannelName(String raw) =>
       raw.toLowerCase().replaceAll(_nonNameChars, '');
   static final _nonNameChars = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
+
+  /// Every matching key for [raw], strictest first: the exact Kodi key, then
+  /// [looseChannelName] when it differs. Exact matches therefore always win;
+  /// the loose key only fills channels that would otherwise have no guide.
+  static List<String> channelNameKeys(String raw) {
+    final strict = normalizeChannelName(raw);
+    if (strict.isEmpty) return const <String>[];
+    final loose = looseChannelName(raw);
+    if (loose.isEmpty || loose == strict) return <String>[strict];
+    return <String>[strict, loose];
+  }
+
+  /// Relaxed matching key that ignores the decoration IPTV providers add to
+  /// channel names but guides never carry:
+  ///   * a leading region / provider prefix — "UK: ", "IN | ", "US - ",
+  ///     "VIP | UK | " (up to two of them)
+  ///   * bracketed tags — "[HD]", "(Backup)", "{FHD}"
+  ///   * quality / codec / frame-rate words — HD, FHD, UHD, 4K, HEVC, 1080p,
+  ///     50FPS, and the superscript forms like "ᴴᴰ"
+  ///   * feed words — "backup", "vip", "multi", "alt"
+  /// So "UK: Sky Sports Main Event FHD" and the guide's "Sky Sports Main
+  /// Event" share the key "skysportsmainevent". Digits are kept: "Sky
+  /// Sports 1" and "Sky Sports 2", or "Channel 4" and "Channel 4 +1", stay
+  /// different channels.
+  static String looseChannelName(String raw) {
+    // Superscript tags ("ᴴᴰ", "ᴿᴬᵂ", "ᵁᴴᴰ ³⁸⁴⁰ᴾ") are never part of the
+    // channel's real name: drop them before anything else.
+    var s = iptvStripTags(raw).toLowerCase();
+    s = s.replaceAll(_bracketTag, ' ');
+    s = s.replaceAll(_noisePhrases, ' ');
+    for (var i = 0; i < 2; i++) {
+      final next = s.replaceFirst(_leadingPrefix, '');
+      if (next == s || next.trim().isEmpty) break;
+      s = next;
+    }
+    final tokens = s
+        .split(_nonNameChars)
+        .where((t) => t.isNotEmpty && !_looseNoise.contains(t))
+        .toList();
+    if (tokens.isEmpty) return '';
+    return tokens.join();
+  }
+
+  static final _bracketTag = RegExp(r'[\[\(\{][^\]\)\}]{0,24}[\]\)\}]');
+
+  /// "UK:", "IN |", "PRIME:", "HINDI:", "US - " … — a short token at the
+  /// very start followed by a separator: up to 6 characters before ":" or
+  /// "|", up to 4 before a SPACED dash ("US - ESPN"). An unspaced dash is
+  /// part of the name ("ARD-alpha", "CNN-News18"), and "Star Sports" never
+  /// matches: the word after "Star" is not a separator.
+  static final _leadingPrefix = RegExp(
+    r'^\s*(?:[\p{L}\p{N}+]{1,6}\s*[:|]+|[\p{L}\p{N}]{1,4}\s+[\-–—»/]+\s)\s*',
+    unicode: true,
+  );
+
+  /// Multi-word decoration removed before tokenising: "LOW BIT",
+  /// "DOLBY AUDIO", "DOLBY ATMOS", "DOLBY VISION".
+  static final _noisePhrases = RegExp(
+    r'\blow\s*bit\b|\bdolby(?:\s+(?:audio|atmos|vision))?\b',
+  );
+
+  static const Set<String> _looseNoise = {
+    'hd',
+    'fhd',
+    'uhd',
+    'sd',
+    'lq',
+    'hq',
+    '4k',
+    '8k',
+    'hevc',
+    'h265',
+    'h264',
+    'x265',
+    '2160p',
+    '1080p',
+    '1080i',
+    '720p',
+    '576p',
+    '480p',
+    '360p',
+    '2160',
+    '1080',
+    '720',
+    '50fps',
+    '60fps',
+    'fps',
+    'raw',
+    '3840p',
+    '3840',
+    '4320p',
+    'hdr',
+    'hdr10',
+    'sdr',
+    'backup',
+    'bkp',
+    'vip',
+    'multi',
+    'alt',
+  };
 
   /// Load (from snapshot or network) the guide for [epgUrl], filtered to
   /// channels the playlist references by tvg-id ([tvgIds], matched
@@ -657,10 +758,11 @@ class XmltvEpgSource {
               final name = displayName;
               final id = channelElemId;
               if (name != null && id != null) {
-                final norm = normalizeChannelName(name.toString());
-                // First guide channel carrying a name wins (Kodi semantics);
+                // Strict key, then the relaxed one (see looseChannelName).
+                // First guide channel carrying a key wins (Kodi semantics);
                 // later duplicates would silently shadow real programmes.
-                if (norm.isNotEmpty && wantedNames.contains(norm)) {
+                for (final norm in channelNameKeys(name.toString())) {
+                  if (!wantedNames.contains(norm)) continue;
                   sawWantedChannel = true;
                   if (!nameToId.containsKey(norm)) {
                     nameToId[norm] = id.toLowerCase();

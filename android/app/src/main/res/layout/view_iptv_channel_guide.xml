@@ -102,6 +102,21 @@
                     android:textColor="#FF7D898E"
                     android:textSize="8sp" />
 
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/iptv_nav_previous"
+                    android:layout_width="50dp"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/iptv_premium_nav_item_bg"
+                    android:contentDescription="Previous channel"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:padding="5dp"
+                    android:text="↩&#10;LAST"
+                    android:textAllCaps="false"
+                    android:textColor="#FF7D898E"
+                    android:textSize="8sp" />
+
                 <Space
                     android:layout_width="1dp"
                     android:layout_height="0dp"

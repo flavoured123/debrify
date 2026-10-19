@@ -24,6 +24,12 @@ class SpotlightRail extends StatelessWidget {
 
   final ValueChanged<IptvPlaylist> onSelectPlaylist;
   final VoidCallback? onOpenRecordings;
+
+  /// Non-null adds the Sports Hub entry to QUICK ACCESS.
+  final VoidCallback? onOpenSports;
+
+  /// Non-null adds the "TV guides" (extra XMLTV guides) action.
+  final VoidCallback? onManageGuides;
   final VoidCallback onNewList;
   final VoidCallback onAddPlaylist;
   final VoidCallback onAddAddon;
@@ -57,6 +63,8 @@ class SpotlightRail extends StatelessWidget {
     this.recordingActive = false,
     this.recordingsSelected = false,
     this.onOpenRecordings,
+    this.onOpenSports,
+    this.onManageGuides,
     this.firstItemFocusNode,
     this.autofocusFirstItem = false,
     this.onUpFromFirstItem,
@@ -97,6 +105,13 @@ class SpotlightRail extends StatelessWidget {
               count: continueWatchingCount,
               selected: _selected(playlist),
               onPressed: () => onSelectPlaylist(playlist),
+            ),
+          if (onOpenSports != null)
+            _RailEntry.action(
+              id: 'sports-hub',
+              label: 'Sports Hub',
+              icon: Icons.sports_score_rounded,
+              onPressed: onOpenSports!,
             ),
           if (showRecordings && onOpenRecordings != null)
             _RailEntry.action(
@@ -173,6 +188,13 @@ class SpotlightRail extends StatelessWidget {
             icon: Icons.extension_rounded,
             onPressed: onAddAddon,
           ),
+          if (onManageGuides != null)
+            _RailEntry.action(
+              id: 'tv-guides',
+              label: 'TV guides',
+              icon: Icons.event_note_rounded,
+              onPressed: onManageGuides!,
+            ),
           _RailEntry.action(
             id: 'manage-sources',
             label: 'Manage sources',

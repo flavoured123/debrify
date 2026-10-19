@@ -446,6 +446,18 @@ class IptvCatalogDb {
         PRIMARY KEY (catalog_key, grp)
       )
     ''',
+    // Single channels the user hid from the hold-OK menu. Keyed by URL, the
+    // stream's identity, so the exclusion survives every refresh exactly like
+    // a hidden category does. Same plain-rowid reasoning as hidden_groups.
+    '''
+      CREATE TABLE IF NOT EXISTS hidden_channels (
+        catalog_key TEXT NOT NULL,
+        url TEXT NOT NULL,
+        name TEXT NOT NULL,
+        hidden_at INTEGER NOT NULL,
+        PRIMARY KEY (catalog_key, url)
+      )
+    ''',
     '''
       CREATE TABLE IF NOT EXISTS webdav_sync_record_state (
         kind TEXT NOT NULL,
@@ -638,7 +650,9 @@ class IptvCatalogDb {
   /// bucket has no name to hide by and always stays visible.
   static const _notHiddenSql =
       'AND NOT EXISTS (SELECT 1 FROM hidden_groups h '
-      'WHERE h.catalog_key = channels.catalog_key AND h.grp = channels.grp)';
+      'WHERE h.catalog_key = channels.catalog_key AND h.grp = channels.grp) '
+      'AND NOT EXISTS (SELECT 1 FROM hidden_channels hc '
+      'WHERE hc.catalog_key = channels.catalog_key AND hc.url = channels.url)';
 
   /// Tests point this at a temp directory; production resolves the app
   /// documents directory once in [open].
@@ -3385,6 +3399,68 @@ class IptvCatalogDb {
   ///
   /// Returns false when the database isn't open (nothing written); an empty
   /// [groups] is vacuous success.
+  // ── Hidden channels (quick hide from the hold-OK menu) ─────────────────
+
+  /// Hide or show one channel of [catalogKey] by its stream URL. Takes effect
+  /// in every channel query through [_notHiddenSql]. Returns false when the
+  /// database is closed or the write failed.
+  static bool setChannelHidden(
+    String catalogKey,
+    String url,
+    bool hidden, {
+    String? name,
+  }) {
+    if (url.isEmpty || !isOpen) return false;
+    final db = _requireDb();
+    try {
+      if (hidden) {
+        db.execute(
+          'INSERT OR REPLACE INTO hidden_channels '
+          '(catalog_key, url, name, hidden_at) VALUES (?, ?, ?, ?)',
+          [catalogKey, url, name ?? '', _nextStampMs()],
+        );
+      } else {
+        db.execute(
+          'DELETE FROM hidden_channels WHERE catalog_key = ? AND url = ?',
+          [catalogKey, url],
+        );
+      }
+      return true;
+    } catch (e) {
+      debugPrint('IptvCatalogDb: setChannelHidden failed: $e');
+      return false;
+    }
+  }
+
+  /// Channels hidden in [catalogKey], most recently hidden first.
+  static List<({String url, String name})> hiddenChannels(String catalogKey) {
+    if (!isOpen) return const [];
+    final rows = _requireDb().select(
+      'SELECT url, name FROM hidden_channels WHERE catalog_key = ? '
+      'ORDER BY hidden_at DESC',
+      [catalogKey],
+    );
+    return [
+      for (final row in rows)
+        (url: row['url'] as String, name: row['name'] as String),
+    ];
+  }
+
+  /// Bring back every hidden channel of [catalogKey].
+  static bool showAllHiddenChannels(String catalogKey) {
+    if (!isOpen) return false;
+    try {
+      _requireDb().execute(
+        'DELETE FROM hidden_channels WHERE catalog_key = ?',
+        [catalogKey],
+      );
+      return true;
+    } catch (e) {
+      debugPrint('IptvCatalogDb: showAllHiddenChannels failed: $e');
+      return false;
+    }
+  }
+
   static bool hideGroups(
     String catalogKey,
     Iterable<String> groups, {

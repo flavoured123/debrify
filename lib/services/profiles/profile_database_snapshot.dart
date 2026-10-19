@@ -360,6 +360,7 @@ class ProfileDatabaseSnapshot {
     'channel_number_assignments',
     'channel_number_namespaces',
     'hidden_groups',
+    'hidden_channels',
     'webdav_sync_meta',
     'webdav_sync_record_state',
   };

@@ -224,6 +224,56 @@ class IptvEpgService {
   Map<String, String> _m3uUrlToTvgId = const {};
   final Map<String, IptvEpgService> _listGuides = {};
 
+  /// Extra XMLTV guides the user added (e.g. a country guide). They only
+  /// fill channels the playlist's own guide does not cover — the provider's
+  /// guide always wins where it has data. Matching is by tvg-id and by
+  /// channel name, so a German guide finds the German channels by itself.
+  final List<IptvEpgService> _extraGuides = [];
+  int _extraGeneration = 0;
+
+  /// Load [urls] as fallback guides for the current playlist. Call after the
+  /// playlist's own context is set ([setM3uEpgContext] clears these).
+  /// Returns how many of the guides matched at least one channel.
+  Future<int> setExtraGuides({
+    required String playlistKey,
+    required List<String> urls,
+    required List<IptvChannel> channels,
+    String? dbCatalogKey,
+  }) async {
+    final generation = ++_extraGeneration;
+    final hadExtras = _extraGuides.isNotEmpty;
+    _extraGuides.clear();
+    if (hadExtras) contextVersion.value++;
+    var matched = 0;
+    var index = 0;
+    for (final raw in urls) {
+      final url = raw.trim();
+      index++;
+      if (url.isEmpty) continue;
+      try {
+        final guide = IptvEpgService._();
+        final status = await guide.setM3uEpgContext(
+          playlistKey: '$playlistKey#extra$index',
+          epgUrl: url,
+          channels: channels,
+          dbCatalogKey: dbCatalogKey,
+        );
+        if (generation != _extraGeneration) return 0;
+        if (status == M3uEpgStatus.matched) {
+          _extraGuides.add(guide);
+          matched++;
+          _programmeCache.clear();
+          _bindingCache.clear();
+          contextVersion.value++;
+        }
+      } catch (e) {
+        debugPrint('IptvEpgService: extra guide $url failed: $e');
+        if (generation != _extraGeneration) return 0;
+      }
+    }
+    return matched;
+  }
+
   /// Favorites/custom lists can mix providers whose XMLTV IDs overlap.
   /// Resolve each membership against its own provider, never the last opened
   /// playlist. Only selected channels are materialized, not whole catalogs.
@@ -457,13 +507,7 @@ class IptvEpgService {
         }
         // Name candidates for every channel — ids stay authoritative, names
         // only ever fill gaps (no tvg-id, or ids the guide doesn't use).
-        final candidates = <String>[];
-        for (final raw in [channel.tvgName, channel.name]) {
-          final norm = XmltvEpgSource.normalizeChannelName(raw ?? '');
-          if (norm.isNotEmpty && !candidates.contains(norm)) {
-            candidates.add(norm);
-          }
-        }
+        final candidates = epgNameCandidates([channel.tvgName, channel.name]);
         if (candidates.isNotEmpty) {
           urlToNames[channel.url] = candidates;
           wantedNames.addAll(candidates);
@@ -562,8 +606,13 @@ class IptvEpgService {
   /// Drop the active XMLTV context (playlist switched away).
   void clearM3uEpgContext() {
     final hadContext =
-        _xmltvIndex != null || _xmltvGuideKey != null || _listGuides.isNotEmpty;
+        _xmltvIndex != null ||
+        _xmltvGuideKey != null ||
+        _listGuides.isNotEmpty ||
+        _extraGuides.isNotEmpty;
     _listGuides.clear();
+    _extraGeneration++;
+    _extraGuides.clear();
     _m3uContextGeneration++;
     _m3uUrlToTvgId = const {};
     _m3uUrlToNames = const {};
@@ -583,7 +632,19 @@ class IptvEpgService {
   /// tvg-name, then the normalized channel name. Id lookups are lowercased —
   /// the parser canonicalizes the index's keys the same way, giving the
   /// case-insensitive matching Kodi defaults to.
+  /// The channel's XMLTV programmes: the playlist's own guide first, then
+  /// any extra guides the user added.
   List<EpgProgramme>? _xmltvProgrammesFor(String channelUrl) {
+    final own = _ownXmltvProgrammesFor(channelUrl);
+    if ((own != null && own.isNotEmpty) || _extraGuides.isEmpty) return own;
+    for (final extra in _extraGuides) {
+      final programmes = extra._xmltvProgrammesFor(channelUrl);
+      if (programmes != null && programmes.isNotEmpty) return programmes;
+    }
+    return own;
+  }
+
+  List<EpgProgramme>? _ownXmltvProgrammesFor(String channelUrl) {
     final listGuide = _listGuides[channelUrl];
     if (listGuide != null) return listGuide._xmltvProgrammesFor(channelUrl);
     final guideKey = _xmltvGuideKey;
@@ -690,11 +751,10 @@ class IptvEpgService {
     );
     _EpgBinding? binding;
     if (identity != null) {
-      final names = <String>[];
-      for (final raw in [identity.attributes['tvg-name'], identity.name]) {
-        final norm = XmltvEpgSource.normalizeChannelName(raw ?? '');
-        if (norm.isNotEmpty && !names.contains(norm)) names.add(norm);
-      }
+      final names = epgNameCandidates([
+        identity.attributes['tvg-name'],
+        identity.name,
+      ]);
       final id = identity.attributes['tvg-id']?.trim();
       binding = _EpgBinding(
         tvgId: (id != null && id.isNotEmpty) ? id.toLowerCase() : null,
@@ -1678,6 +1738,27 @@ class _EpgBinding {
   const _EpgBinding({required this.tvgId, required this.names});
 }
 
+/// Guide-matching keys for one channel, in lookup order: every exact
+/// (strict) key first, then the relaxed keys. A channel the guide names
+/// exactly is never re-bound by a looser key.
+List<String> epgNameCandidates(List<String?> raws) {
+  final strict = <String>[];
+  final loose = <String>[];
+  for (final raw in raws) {
+    final keys = XmltvEpgSource.channelNameKeys(raw ?? '');
+    if (keys.isEmpty) continue;
+    if (!strict.contains(keys.first)) strict.add(keys.first);
+    for (final k in keys.skip(1)) {
+      if (!loose.contains(k)) loose.add(k);
+    }
+  }
+  return [
+    ...strict,
+    for (final k in loose)
+      if (!strict.contains(k)) k,
+  ];
+}
+
 class _EpgFilterSetsJob {
   final String dbPath;
   final String catalogKey;
@@ -1707,10 +1788,7 @@ _EpgFilterSets _buildEpgFilterSetsJob(_EpgFilterSetsJob job) {
       final bare = IptvEpgService.stripFeedSuffix(id);
       if (bare != id) ids.add(bare);
     }
-    for (final raw in [row.tvgName, row.name]) {
-      final norm = XmltvEpgSource.normalizeChannelName(raw ?? '');
-      if (norm.isNotEmpty) names.add(norm);
-    }
+    names.addAll(epgNameCandidates([row.tvgName, row.name]));
   }
   return _EpgFilterSets(ids: ids, names: names);
 }

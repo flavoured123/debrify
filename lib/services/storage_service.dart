@@ -1461,15 +1461,22 @@ class StorageService {
   };
 
   /// Whether browsing IPTV channels may open the focused channel in the
-  /// embedded side preview. This is on by default to preserve the shipped
-  /// experience; users whose provider enforces a small connection limit can
-  /// turn it off without affecting explicit fullscreen playback.
+  /// embedded side preview. Users whose provider enforces a small connection
+  /// limit can turn it off without affecting explicit fullscreen playback.
+  ///
+  /// Default: OFF on Android (Fire TV, Android TV boxes, phones). The preview
+  /// opens a SECOND live stream while the user is still browsing; on a
+  /// 1-2 connection IPTV plan that connection is what the real player then
+  /// needs, and on low-RAM boxes the extra decoder makes the channel list
+  /// stutter. Desktop keeps it on. An explicit choice in IPTV settings always
+  /// wins over this default.
   static const String _iptvChannelPreviewEnabledKey =
       'iptv_channel_preview_enabled';
 
   static Future<bool> getIptvChannelPreviewEnabled() async {
     final prefs = await ProfilePreferences.instance();
-    return prefs.getBool(_iptvChannelPreviewEnabledKey) ?? true;
+    return prefs.getBool(_iptvChannelPreviewEnabledKey) ??
+        defaultTargetPlatform != TargetPlatform.android;
   }
 
   static Future<void> setIptvChannelPreviewEnabled(bool enabled) async {

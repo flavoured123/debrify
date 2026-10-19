@@ -65,6 +65,9 @@ class IptvFiltersBar extends StatelessWidget {
   final VoidCallback? onOpenRecordings;
   final bool recordingLive;
 
+  /// Non-null shows the Sports Hub button at the end of the bar.
+  final VoidCallback? onOpenSports;
+
   /// Non-null lets long-press (or hold-OK on) a category open its options
   /// (set as landing default, hide). Null on sources that have no stored
   /// catalog to key those against, which is also what keeps the hint off
@@ -94,6 +97,7 @@ class IptvFiltersBar extends StatelessWidget {
     this.onDownArrowPressed,
     this.onOpenRecordings,
     this.recordingLive = false,
+    this.onOpenSports,
     this.onCategoryOptions,
   });
 
@@ -208,8 +212,21 @@ class IptvFiltersBar extends StatelessWidget {
                     ],
                   ),
               ],
-              if (onOpenRecordings != null) ...[
+              if (onOpenSports != null) ...[
                 if (!showChannelCount) const Spacer(),
+                IconButton(
+                  tooltip: 'Sports Hub',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onOpenSports,
+                  icon: Icon(
+                    Icons.sports_score_rounded,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+              if (onOpenRecordings != null) ...[
+                if (!showChannelCount && onOpenSports == null) const Spacer(),
                 const SizedBox(width: 4),
                 _RecordingsButton(
                   live: recordingLive,
@@ -1021,8 +1038,22 @@ class _CategoryPickerSheetState extends State<_CategoryPickerSheet> {
   /// lazy list has actually built; DPAD only ever asks for a neighbor of a
   /// built tile, which the list's cache extent has already built too.
   final Map<int, FocusNode> _focusNodes = {};
+  final TextEditingController _query = TextEditingController();
+  final FocusNode _searchNode = FocusNode(debugLabel: 'iptv-category-search');
 
-  int get _optionCount => widget.categories.length + 1;
+  /// Lower-cased search text; empty = the full list.
+  String _q = '';
+
+  /// Categories after the search filter. Option index 0 stays "All
+  /// Categories" so the D-pad index arithmetic below is unchanged.
+  List<String> get _visible => _q.isEmpty
+      ? widget.categories
+      : [
+          for (final c in widget.categories)
+            if (c.toLowerCase().contains(_q)) c,
+        ];
+
+  int get _optionCount => _visible.length + 1;
 
   FocusNode _nodeFor(int index) => _focusNodes.putIfAbsent(
     index,
@@ -1043,6 +1074,8 @@ class _CategoryPickerSheetState extends State<_CategoryPickerSheet> {
     for (final node in _focusNodes.values) {
       node.dispose();
     }
+    _query.dispose();
+    _searchNode.dispose();
     super.dispose();
   }
 
@@ -1068,6 +1101,12 @@ class _CategoryPickerSheetState extends State<_CategoryPickerSheet> {
 
     if (event.logicalKey == LogicalKeyboardKey.arrowUp && index > 0) {
       _nodeFor(index - 1).requestFocus();
+      return KeyEventResult.handled;
+    }
+
+    // Up from the first row reaches the search box.
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp && index == 0) {
+      _searchNode.requestFocus();
       return KeyEventResult.handled;
     }
 
@@ -1138,6 +1177,48 @@ class _CategoryPickerSheetState extends State<_CategoryPickerSheet> {
                 ],
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Focus(
+                canRequestFocus: false,
+                skipTraversal: true,
+                onKeyEvent: (node, event) {
+                  if (event is KeyDownEvent &&
+                      event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                    _nodeFor(0).requestFocus();
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: TextField(
+                  controller: _query,
+                  focusNode: _searchNode,
+                  textInputAction: TextInputAction.search,
+                  onChanged: (raw) {
+                    final next = raw.trim().toLowerCase();
+                    if (next != _q) setState(() => _q = next);
+                  },
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'Search ${widget.categories.length} folders…',
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    suffixIcon: _q.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'Clear',
+                            icon: const Icon(Icons.close_rounded),
+                            onPressed: () {
+                              _query.clear();
+                              setState(() => _q = '');
+                            },
+                          ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
             const SizedBox(height: 8),
 
             // Options — built lazily; index 0 is "All Categories". shrinkWrap
@@ -1145,7 +1226,7 @@ class _CategoryPickerSheetState extends State<_CategoryPickerSheet> {
             // trade a full-height sheet for an instant open.
             Flexible(
               child: ListView.builder(
-                shrinkWrap: widget.categories.length <= 40,
+                shrinkWrap: _visible.length <= 40,
                 itemCount: _optionCount,
                 itemBuilder: (context, index) {
                   if (index == 0) {
@@ -1163,7 +1244,7 @@ class _CategoryPickerSheetState extends State<_CategoryPickerSheet> {
                           _handleKeyEvent(node, event, 0, pickAll),
                     );
                   }
-                  final category = widget.categories[index - 1];
+                  final category = _visible[index - 1];
                   final isSelected = category == widget.selectedCategory;
                   final count = widget.categoryCounts?[category];
                   void pick() =>

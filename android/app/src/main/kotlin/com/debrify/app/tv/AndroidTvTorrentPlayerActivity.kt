@@ -452,6 +452,13 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
             iptvStrictTsUrls.add(url)
         ) {
             iptvTuneDiagnostics.onRecovery(source, "strict-ts")
+            // Second channel proving it: this box is a strict decoder. Keep
+            // that across app restarts so the next launch never freezes
+            // first (see IptvDeviceQuirks.learnedStrictTs).
+            if (IptvDeviceQuirks.sessionProvesStrictDevice(iptvStrictTsUrls.size)) {
+                IptvDeviceQuirks.rememberStrictTs(this)
+                iptvTuneDiagnostics.note("demux=strict learned=device")
+            }
         }
         // Segmented streams have no strict rung — but an Xtream `.m3u8` has a
         // progressive `.ts` twin that does. Divert the strict-rung re-tune
@@ -908,7 +915,7 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
             manufacturer = android.os.Build.MANUFACTURER,
             model = android.os.Build.MODEL,
             device = android.os.Build.DEVICE,
-        )
+        ) || IptvDeviceQuirks.learnedStrictTs(this)
     }
 
     // ── Xtream HLS→TS twin trial ─────────────────────────────────────────
@@ -7073,6 +7080,18 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
             return true
         }
 
+        // IPTV: the remote's LAST / PREV CH key flips back to the previous
+        // channel (the guide rail's "↩ LAST" button does the same).
+        if (isIptvMode &&
+            iptvChannels.getOrNull(currentIptvIndex)?.isLive == true &&
+            keyCode == KeyEvent.KEYCODE_LAST_CHANNEL
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                tuneIptvPreviousChannel()
+            }
+            return true
+        }
+
         // Handle IPTV guide overlay
         if (iptvGuideVisible) {
             if (event.action == KeyEvent.ACTION_DOWN) {
@@ -9916,6 +9935,7 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
             R.id.iptv_nav_browse,
             R.id.iptv_nav_search,
             R.id.iptv_nav_favorites,
+            R.id.iptv_nav_previous,
             R.id.iptv_nav_sources,
             R.id.iptv_nav_close,
             R.id.iptv_source_button,
@@ -10001,6 +10021,9 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
         }
         findViewById<View>(R.id.iptv_nav_sources)?.setOnClickListener {
             showIptvSourcePicker()
+        }
+        findViewById<View>(R.id.iptv_nav_previous)?.setOnClickListener {
+            tuneIptvPreviousChannel()
         }
         findViewById<View>(R.id.iptv_nav_close)?.setOnClickListener {
             hideIptvGuide()
@@ -10092,6 +10115,7 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
             R.id.iptv_nav_browse,
             R.id.iptv_nav_search,
             R.id.iptv_nav_favorites,
+            R.id.iptv_nav_previous,
             R.id.iptv_nav_sources,
             R.id.iptv_nav_close,
             R.id.iptv_source_button,
@@ -10345,6 +10369,7 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
         val liveVisibility = if (liveCatalog) View.VISIBLE else View.GONE
         findViewById<View>(R.id.iptv_nav_browse)?.visibility = liveVisibility
         findViewById<View>(R.id.iptv_nav_search)?.visibility = liveVisibility
+        findViewById<View>(R.id.iptv_nav_previous)?.visibility = liveVisibility
         findViewById<View>(R.id.iptv_filter_bar)?.visibility = liveVisibility
 
         val sourceVisibility =
@@ -12348,6 +12373,12 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
         iptvStartOverLoading = false
         iptvStartOverTimelineVisible = false
         val previousPlaying = iptvChannels.getOrNull(currentIptvIndex)
+        // "Last channel" memory: the live channel we are leaving.
+        if (previousPlaying != null && previousPlaying.isLive &&
+            previousPlaying.url != entry.url
+        ) {
+            iptvPreviousEntry = previousPlaying
+        }
         // Bank the outgoing channel's position BEFORE currentIptvIndex moves,
         // or zapping back to a half-watched movie would rewind it to wherever
         // it stood when the player was launched.
@@ -12546,6 +12577,33 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
     /** Fullscreen channel zap: previous/next channel in guide order,
      *  paging through the active category and crossing into the adjacent
      *  category at its ends. */
+    /** The live channel that played before the current one ("last channel"). */
+    private var iptvPreviousEntry: IptvChannelEntry? = null
+
+    /**
+     * Flip back to the previous live channel. Only within the current zap
+     * list: re-tuning an entry from an older list would collapse CH +/- to a
+     * one-channel list.
+     */
+    private fun tuneIptvPreviousChannel() {
+        val previous = iptvPreviousEntry
+        if (previous == null) {
+            Toast.makeText(this, "No previous channel yet", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val resident = iptvChannels.firstOrNull { it.url == previous.url }
+        if (resident == null) {
+            Toast.makeText(
+                this,
+                "${previous.displayName} is in another list — open it from the guide",
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
+        if (iptvGuideVisible) hideIptvGuide()
+        switchToIptvChannel(resident, adoptVisibleBrowseList = false)
+    }
+
     private fun zapIptvChannel(delta: Int) {
         if (iptvChannels.getOrNull(currentIptvIndex)?.isLive != true) return
         // A physical channel key is a real tune, so the temporary search scope

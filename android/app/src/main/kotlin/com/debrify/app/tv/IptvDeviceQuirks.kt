@@ -1,5 +1,7 @@
 package com.debrify.app.tv
 
+import android.content.Context
+
 /** Device-specific IPTV workarounds kept outside the player activity so the
  * matching rules can be covered by plain JVM tests. */
 internal object IptvDeviceQuirks {
@@ -30,4 +32,37 @@ internal object IptvDeviceQuirks {
     }
 
     private fun String?.normalized(): String = orEmpty().trim().lowercase()
+
+    // ── Learned strict demux ────────────────────────────────────────────
+    // The player already discovers strict-decoder devices on its own: once
+    // two different channels freeze (video stuck, audio running) under the
+    // aggressive TS join flags, the rest of the session tunes strictly.
+    // That discovery used to be forgotten on every app start, so boxes like
+    // Fire TV and Amlogic/MediaTek Android TV units froze again on each
+    // launch before the session re-learned it. Remember it per install.
+
+    private const val PREFS = "debrify_iptv_device_quirks"
+    private const val KEY_STRICT_TS = "strict_ts_learned"
+
+    fun learnedStrictTs(context: Context): Boolean = try {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_STRICT_TS, false)
+    } catch (_: Throwable) {
+        false
+    }
+
+    fun rememberStrictTs(context: Context) {
+        try {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_STRICT_TS, true)
+                .apply()
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** Pure rule, unit-testable: the session has enough evidence that the
+     *  DEVICE (not one odd channel) needs strict demux. */
+    fun sessionProvesStrictDevice(strictChannelCount: Int): Boolean =
+        strictChannelCount >= 2
 }

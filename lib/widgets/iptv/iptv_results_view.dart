@@ -34,9 +34,15 @@ import '../../services/stremio_service.dart';
 import '../../services/xtream_codes_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/video_player_launcher.dart';
+import '../../services/iptv_vod_info_service.dart';
+import '../../services/iptv_extra_guides.dart';
+import '../../services/youtube_service.dart';
+import '../../utils/iptv_title_match.dart';
+import '../../utils/iptv_name_tags.dart';
 import '../../utils/iptv_player_paging.dart';
 import '../../utils/tv_keys.dart' show TvHeldKeyGuard, isActivateOrSpaceKey;
 import '../../screens/iptv/xtream_series_detail.dart';
+import '../../screens/iptv/sports_hub_screen.dart';
 import '../../screens/settings/iptv_settings_page.dart';
 import '../hero_trailer_backdrop.dart';
 import '../home/cw_card_menu.dart';
@@ -50,6 +56,7 @@ import 'iptv_filters.dart';
 import 'iptv_channel_row.dart';
 import 'iptv_list_picker_dialog.dart';
 import 'iptv_list_name_dialog.dart';
+import 'iptv_sources_sheet.dart';
 import 'iptv_empty_state.dart';
 import 'iptv_epg_panel.dart';
 import 'iptv_command_rail.dart';
@@ -194,7 +201,17 @@ class IptvResultsViewState extends State<IptvResultsView>
   /// Whether focusing a row may open its stream in the embedded side stage.
   /// The channel identity and stage actions remain available when false; only
   /// the automatic tune is suppressed so it cannot consume a provider slot.
-  bool _channelPreviewEnabled = true;
+  // Mirrors StorageService's default until the saved choice loads: off on
+  // Android so a browsing TV never opens a second stream by surprise.
+  bool _channelPreviewEnabled = defaultTargetPlatform != TargetPlatform.android;
+
+  /// With the automatic preview off, the channel the user explicitly
+  /// previewed with a first OK. A second OK on it goes fullscreen; moving
+  /// focus away stops it. Only ever one stream at a time.
+  IptvChannel? _okPreviewChannel;
+
+  bool _previewActiveFor(IptvChannel? ch) =>
+      _channelPreviewEnabled || (ch != null && identical(ch, _okPreviewChannel));
 
   /// Desktop gets the full two-pane experience too: source rail, embedded
   /// live preview, quiet filters — hover previews, click plays.
@@ -2734,6 +2751,8 @@ class IptvResultsViewState extends State<IptvResultsView>
           // still the one speaking.
           _hideChipIfOwned(_ChipOwner.guide);
           if (!mounted || ticket != _loadTicket) return;
+          // The user's extra guides fill whatever this one left uncovered.
+          unawaited(_loadExtraGuides(playlist, result.channels, ticket));
           // Failure hints only for a guide the user configured themselves.
           // Header-derived url-tvg URLs are routinely dead in wild playlists —
           // those users never asked for EPG and got silent no-guide before;
@@ -2781,6 +2800,8 @@ class IptvResultsViewState extends State<IptvResultsView>
           debugPrint('IPTV: guide context update failed: $e');
           _hideChipIfOwned(_ChipOwner.guide);
           if (!mounted || ticket != _loadTicket) return;
+          // The provider's guide failed — the extra guides can still help.
+          unawaited(_loadExtraGuides(playlist, result.channels, ticket));
           if (!quiet && hasManualUrl) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -4423,6 +4444,21 @@ class IptvResultsViewState extends State<IptvResultsView>
     IptvChannel channel, {
     bool Function()? shouldCancel,
   }) async {
+    // Movies and series: offer the copies other folders hold (Netflix 4K,
+    // 4K Movies, Netflix Multi …), best quality first, with the plot and
+    // trailer when the panel has them. Machine-driven launches (startup,
+    // continue-watching rebuilds) pass shouldCancel and skip this.
+    var pickedOtherCopy = false;
+    if (shouldCancel == null && !channel.isLive) {
+      final choice = await _chooseVodCopy(channel);
+      if (choice == null || !mounted) return;
+      if (choice.action == IptvSourceAction.trailer) {
+        await _playVodTrailer(choice.youtubeId!, choice.channel.name);
+        return;
+      }
+      pickedOtherCopy = !identical(choice.channel, channel);
+      channel = choice.channel;
+    }
     // Series entries aren't playable — their sentinel URL routes to the
     // merged series page, whose episode list does the actual playing.
     if (channel.contentType == 'series') {
@@ -4479,9 +4515,13 @@ class IptvResultsViewState extends State<IptvResultsView>
     // The in-player guide mirrors what the user was browsing: the current
     // category/search filter, not the whole playlist. (Also what keeps the
     // launch payload small when a filter is active.)
-    var channels = _filteredChannels.contains(channel)
-        ? _filteredChannels
-        : _allChannels;
+    // A copy picked from ANOTHER folder is not resident in the browsed list:
+    // launch it on its own instead of indexing it into rows it isn't in.
+    var channels = pickedOtherCopy
+        ? <IptvChannel>[channel]
+        : (_filteredChannels.contains(channel)
+              ? _filteredChannels
+              : _allChannels);
     var channelIndex = channels is DbChannelList
         // Identity lookup against resident pages — the tapped row is by
         // definition resident; a paged indexOf would walk the catalog.
@@ -4927,6 +4967,561 @@ class IptvResultsViewState extends State<IptvResultsView>
     if (mounted && count != _scheduledCount) {
       setState(() => _scheduledCount = count);
     }
+  }
+
+  // ── Extra TV guides ────────────────────────────────────────────────────
+
+  /// Load the user's extra XMLTV guides as fallbacks for [playlist]'s live
+  /// channels. Returns how many matched at least one channel.
+  Future<int> _loadExtraGuides(
+    IptvPlaylist playlist,
+    List<IptvChannel> channels,
+    int ticket,
+  ) async {
+    final isPlainM3u = !playlist.isVirtual && !playlist.isXtreamCodes;
+    final isXtreamLive =
+        playlist.isXtreamCodes && _selectedContentType == 'live';
+    if (!isPlainM3u && !isXtreamLive) return 0;
+    final urls = await IptvExtraGuides.load();
+    if (!mounted || ticket != _loadTicket) return 0;
+    try {
+      // Root zone for the same reason as the provider guide: this takes the
+      // catalog maintenance gate and must not inherit a caller's gate zone.
+      final matched = await Zone.root.run(
+        () => IptvEpgService.instance.setExtraGuides(
+          playlistKey: playlist.id,
+          urls: urls,
+          channels: channels,
+          dbCatalogKey: _dbSnapshot?.catalogKey,
+        ),
+      );
+      if (mounted && ticket == _loadTicket && matched > 0) setState(() {});
+      return matched;
+    } catch (e) {
+      debugPrint('IPTV: extra guides failed: $e');
+      return 0;
+    }
+  }
+
+  /// Add or remove extra guide links, then load them for this playlist.
+  Future<void> _manageExtraGuides() async {
+    final urls = await IptvExtraGuides.load();
+    if (!mounted) return;
+    final input = TextEditingController();
+    final t = IptvStyleTokens.spotlight;
+    String? error;
+    final saved = await showDialog<List<String>>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.68),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          void add() {
+            final url = input.text.trim();
+            if (!IptvExtraGuides.looksValid(url)) {
+              setDialogState(
+                () => error = 'Enter a full http(s) link to an XMLTV file',
+              );
+              return;
+            }
+            if (!urls.contains(url) &&
+                urls.length >= IptvExtraGuides.maxGuides) {
+              setDialogState(
+                () => error = 'Up to ${IptvExtraGuides.maxGuides} guides',
+              );
+              return;
+            }
+            setDialogState(() {
+              if (!urls.contains(url)) urls.add(url);
+              input.clear();
+              error = null;
+            });
+          }
+
+          return TvHeldKeyGuard(
+            child: AlertDialog(
+              backgroundColor: t.panel,
+              surfaceTintColor: Colors.transparent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: BorderSide(color: t.hairline2),
+              ),
+              title: Text(
+                'Extra TV guides',
+                style: TextStyle(color: t.fg, fontWeight: FontWeight.w800),
+              ),
+              content: SizedBox(
+                width: 540,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'XMLTV links (.xml or .xml.gz) that fill in the guide '
+                        'for channels your provider has no data for. Your '
+                        'provider\'s own guide always comes first. Channels '
+                        'are matched by name, so a country guide finds its '
+                        'own channels.',
+                        style: TextStyle(color: t.fgMid, height: 1.4),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Example: https://epgshare01.online/epgshare01/'
+                        'epg_ripper_DE1.xml.gz',
+                        style: TextStyle(color: t.fgDim, fontSize: 12),
+                      ),
+                      const SizedBox(height: 14),
+                      if (urls.isEmpty)
+                        Text(
+                          'No extra guides yet.',
+                          style: TextStyle(color: t.fgDim),
+                        ),
+                      for (final url in urls)
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                url,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: t.fg, fontSize: 13),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Remove',
+                              icon: Icon(
+                                Icons.delete_outline_rounded,
+                                color: t.fgDim,
+                              ),
+                              onPressed: () {
+                                setDialogState(() {
+                                  urls.remove(url);
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                      const SizedBox(height: 10),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: input,
+                              keyboardType: TextInputType.url,
+                              style: TextStyle(color: t.fg),
+                              decoration: InputDecoration(
+                                isDense: true,
+                                hintText: 'https://…/guide.xml.gz',
+                                hintStyle: TextStyle(color: t.fgFaint),
+                                errorText: error,
+                              ),
+                              onSubmitted: (_) => add(),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            onPressed: add,
+                            child: const Text('Add'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () =>
+                      Navigator.of(dialogContext).pop(List<String>.of(urls)),
+                  child: const Text('Save & load'),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    input.dispose();
+    if (saved == null || !mounted) return;
+    await IptvExtraGuides.save(saved);
+    final playlist = _selectedPlaylist;
+    if (playlist == null || !mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(
+      SnackBar(
+        content: Text(
+          saved.isEmpty
+              ? 'Extra TV guides removed'
+              : 'Loading extra TV guides… big guides can take a minute',
+        ),
+      ),
+    );
+    final matched = await _loadExtraGuides(playlist, _allChannels, _loadTicket);
+    if (!mounted || saved.isEmpty) return;
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            '$matched of ${saved.length} extra guide'
+            '${saved.length == 1 ? '' : 's'} matched your channels',
+          ),
+        ),
+      );
+  }
+
+  // ── OK to preview, OK again for fullscreen ─────────────────────────────
+
+  /// Live-channel activation from the TV guide. With the automatic preview
+  /// off (the Android default), the first OK plays the channel in the side
+  /// stage and the second OK on the same channel goes fullscreen — so a
+  /// channel can be checked without leaving the guide, and the stage stream
+  /// is stopped before the player opens its own (one connection at a time).
+  Future<void> _activateLive(IptvChannel channel) async {
+    final previewFirst =
+        !_channelPreviewEnabled &&
+        channel.isLive &&
+        channel.contentType != 'series' &&
+        !_startupLaunchActive &&
+        !identical(_okPreviewChannel, channel);
+    if (previewFirst) {
+      setState(() => _okPreviewChannel = channel);
+      _spotlightProgrammeShown.value = null;
+      _previewShown.value = channel;
+      _retunePreview(channel);
+      return;
+    }
+    if (identical(_okPreviewChannel, channel)) {
+      _okPreviewChannel = null;
+      _stopPreviewPlayback();
+    }
+    await _playChannel(channel);
+  }
+
+  // ── Movie / series copies ──────────────────────────────────────────────
+
+  /// Every copy of [channel]'s movie or series in this catalog (other
+  /// folders included), best quality first. Always contains [channel].
+  List<IptvChannel> _vodCopiesOf(IptvChannel channel) {
+    final snap = _dbSnapshot;
+    if (snap == null) return [channel];
+    final key = iptvTitleKeyOf(channel.name);
+    if (!key.isUsable) return [channel];
+    final List<({int position, IptvChannel channel})> found;
+    try {
+      found = snap.pageEntries(
+        offset: 0,
+        limit: 300,
+        search: key.searchWord,
+        live: false,
+      );
+    } catch (e) {
+      debugPrint('IPTV: copy lookup failed: $e');
+      return [channel];
+    }
+    final isSeries = channel.contentType == 'series';
+    final seen = <String>{channel.url};
+    final copies = <IptvChannel>[channel];
+    for (final entry in found) {
+      final candidate = entry.channel;
+      if (!seen.add(candidate.url)) continue;
+      if ((candidate.contentType == 'series') != isSeries) continue;
+      if (!iptvTitleKeyOf(candidate.name).matches(key)) continue;
+      copies.add(candidate);
+      if (copies.length >= 30) break;
+    }
+    copies.sort(
+      (a, b) =>
+          iptvCopyQualityScore(b.name).compareTo(iptvCopyQualityScore(a.name)),
+    );
+    return copies;
+  }
+
+  /// The copy to play (or the trailer to show). Plays [channel] straight
+  /// away when there is nothing to show: one copy and no panel details.
+  /// Null when the user backed out.
+  Future<IptvSourceChoice?> _chooseVodCopy(IptvChannel channel) async {
+    final copies = _vodCopiesOf(channel);
+    final isSeries = channel.contentType == 'series';
+    final playlist = _selectedPlaylist;
+    // A movie on an Xtream panel always gets the details sheet (plot,
+    // trailer, copies); a series has its own detail page, so it only stops
+    // here when there are copies to choose from.
+    final canDescribe =
+        !isSeries &&
+        playlist != null &&
+        playlist.isXtreamCodes &&
+        IptvVodInfoService.vodIdFromUrl(channel.url) != null;
+    if (copies.length <= 1 && !canDescribe) {
+      return IptvSourceChoice.play(channel);
+    }
+    final info = canDescribe && playlist != null
+        ? IptvVodInfoService.fetch(playlist, channel)
+        : null;
+    return showIptvSourcesSheet(
+      context: context,
+      title: channel.name,
+      sources: copies,
+      info: info,
+      isSeries: isSeries,
+    );
+  }
+
+  Future<void> _playVodTrailer(String youtubeId, String title) async {
+    YoutubeResolvedStreams? streams;
+    try {
+      streams = await YoutubeService.resolveStreams(youtubeId);
+    } catch (_) {
+      streams = null;
+    }
+    if (!mounted) return;
+    final playUrl = streams?.playUrl;
+    if (playUrl == null || playUrl.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Couldn\'t load trailer')));
+      return;
+    }
+    await VideoPlayerLauncher.push(
+      context,
+      VideoPlayerLaunchArgs(
+        videoUrl: playUrl,
+        audioUrl: streams?.audioUrl,
+        fallbackUrl: streams?.muxedPlaybackFallback,
+        title: '$title — Trailer',
+        viewMode: PlaylistViewMode.sorted,
+      ),
+      isTrailer: true,
+    );
+  }
+
+  // ── Quick hide (hold OK on a channel) ──────────────────────────────────
+  //
+  // No confirmation step: the action is instantly undoable (snackbar) and
+  // everything hidden can be brought back from "Hidden items" in the same
+  // menu, without a trip to Settings.
+
+  /// Every provider folder sharing [code] as its prefix ("DE|", "ASIA|").
+  List<String> _foldersForCountry(CatalogSnapshot snap, String code) => [
+    for (final group in snap.categories)
+      if (iptvFolderCountryCode(group) == code) group,
+  ];
+
+  void _showUndoSnack(String message, VoidCallback undo) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 6),
+          action: SnackBarAction(label: 'Undo', onPressed: undo),
+        ),
+      );
+  }
+
+  Future<void> _quickHideChannel(IptvChannel channel) async {
+    final snap = _dbSnapshot;
+    if (snap == null) return;
+    final key = snap.catalogKey;
+    if (!IptvCatalogDb.setChannelHidden(
+      key,
+      channel.url,
+      true,
+      name: channel.name,
+    )) {
+      _showChip(
+        _CatalogChipState.failure,
+        'Couldn\'t hide "${channel.name}" — try again',
+        autoHide: const Duration(milliseconds: 3500),
+      );
+      return;
+    }
+    await _refreshAfterHiddenChange();
+    if (!mounted) return;
+    _showUndoSnack('Hidden: ${channel.name}', () {
+      IptvCatalogDb.setChannelHidden(key, channel.url, false);
+      unawaited(_refreshAfterHiddenChange());
+    });
+  }
+
+  /// Hide [groups] at once (one folder, or every folder of a country).
+  /// Undo only brings back the folders THIS action hid.
+  Future<void> _quickHideFolders(List<String> groups, String label) async {
+    final snap = _dbSnapshot;
+    if (snap == null || groups.isEmpty) return;
+    final key = snap.catalogKey;
+    final already = IptvCatalogDb.hiddenGroups(key);
+    final fresh = [
+      for (final group in groups)
+        if (!already.contains(group)) group,
+    ];
+    if (fresh.isEmpty) return;
+    if (!IptvCatalogDb.hideGroups(key, fresh)) {
+      _showChip(
+        _CatalogChipState.failure,
+        'Couldn\'t hide $label — try again',
+        autoHide: const Duration(milliseconds: 3500),
+      );
+      return;
+    }
+    await _refreshAfterHiddenChange();
+    if (!mounted) return;
+    _showUndoSnack('Hidden: $label', () {
+      for (final group in fresh) {
+        IptvCatalogDb.setGroupHidden(key, group, false);
+      }
+      unawaited(_refreshAfterHiddenChange());
+    });
+  }
+
+  /// Everything hidden in the current playlist, each with a one-press "show
+  /// again". Reached from the channel menu, so un-hiding never needs Settings.
+  Future<void> _showHiddenItems() async {
+    final snap = _dbSnapshot;
+    if (snap == null) return;
+    final key = snap.catalogKey;
+    final t = IptvStyleTokens.spotlight;
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.68),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final folders = IptvCatalogDb.hiddenGroups(key).toList()..sort();
+          final channels = IptvCatalogDb.hiddenChannels(key);
+          var first = true;
+          bool takeFirst() {
+            final was = first;
+            first = false;
+            return was;
+          }
+
+          void changed() {
+            setDialogState(() {});
+            unawaited(_refreshAfterHiddenChange());
+          }
+
+          Widget header(String text) => Padding(
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 4),
+            child: Text(
+              text,
+              style: TextStyle(
+                color: t.fgDim,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.4,
+              ),
+            ),
+          );
+
+          Widget item({
+            required IconData icon,
+            required String label,
+            required VoidCallback onShow,
+          }) => ListTile(
+            autofocus: takeFirst(),
+            leading: Icon(icon, color: t.fgDim),
+            title: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: t.fg),
+            ),
+            trailing: Text(
+              'Show',
+              style: TextStyle(color: t.accent, fontWeight: FontWeight.w700),
+            ),
+            onTap: onShow,
+          );
+
+          return TvHeldKeyGuard(
+            child: SimpleDialog(
+              backgroundColor: t.panel,
+              surfaceTintColor: Colors.transparent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: BorderSide(color: t.hairline2),
+              ),
+              title: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Hidden items',
+                      style: TextStyle(
+                        color: t.fg,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  CloseButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                  ),
+                ],
+              ),
+              children: [
+                if (folders.isEmpty && channels.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+                    child: Text(
+                      'Nothing is hidden in this playlist.',
+                      style: TextStyle(color: t.fgDim),
+                    ),
+                  ),
+                if (folders.length + channels.length > 1)
+                  item(
+                    icon: Icons.visibility_outlined,
+                    label: 'Show everything',
+                    onShow: () {
+                      IptvCatalogDb.showAllGroups(key);
+                      IptvCatalogDb.showAllHiddenChannels(key);
+                      changed();
+                    },
+                  ),
+                if (folders.isNotEmpty) header('FOLDERS (${folders.length})'),
+                for (final group in folders)
+                  item(
+                    icon: Icons.folder_off_outlined,
+                    label: group,
+                    onShow: () {
+                      IptvCatalogDb.setGroupHidden(key, group, false);
+                      changed();
+                    },
+                  ),
+                if (channels.isNotEmpty)
+                  header('CHANNELS (${channels.length})'),
+                for (final hidden in channels)
+                  item(
+                    icon: Icons.visibility_off_outlined,
+                    label: hidden.name.isEmpty ? hidden.url : hidden.name,
+                    onShow: () {
+                      IptvCatalogDb.setChannelHidden(key, hidden.url, false);
+                      changed();
+                    },
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Sports Hub: live-now / upcoming / best-quality sports channels drawn
+  /// from every playlist the user has added.
+  void _openSportsHub() {
+    unawaited(
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => SportsHubScreen(playlists: List.of(_playlists)),
+        ),
+      ),
+    );
   }
 
   void _openScheduledRecordings() {
@@ -5922,6 +6517,8 @@ class IptvResultsViewState extends State<IptvResultsView>
     bool autofocusFirstItem = false,
     ValueChanged<IptvPlaylist>? onSelectPlaylist,
     VoidCallback? onOpenRecordings,
+    VoidCallback? onOpenSports,
+    VoidCallback? onManageGuides,
     VoidCallback? onNewList,
     VoidCallback? onAddPlaylist,
     VoidCallback? onAddAddon,
@@ -5957,6 +6554,8 @@ class IptvResultsViewState extends State<IptvResultsView>
       onOpenRecordings:
           onOpenRecordings ??
           (_pageCanRecord ? _openScheduledRecordings : null),
+      onOpenSports: onOpenSports ?? _openSportsHub,
+      onManageGuides: onManageGuides ?? () => unawaited(_manageExtraGuides()),
       onNewList: onNewList ?? () => unawaited(_promptCreateList()),
       onAddPlaylist: onAddPlaylist ?? _navigateToSettings,
       onAddAddon: onAddAddon ?? _navigateToAddons,
@@ -6305,6 +6904,16 @@ class IptvResultsViewState extends State<IptvResultsView>
         : null;
     final canSave = channel.contentType != 'series';
     final isFavorited = _favoriteUrls.contains(channel.url);
+    // Quick hide works on stored catalogs only (the same rule as category
+    // options): virtual lists and imported files have nothing to key against.
+    final hideSnap = _dbSnapshot;
+    final folder = (channel.group?.trim().isEmpty ?? true)
+        ? null
+        : channel.group;
+    final countryCode = folder == null ? null : iptvFolderCountryCode(folder);
+    final countryFolders = (hideSnap == null || countryCode == null)
+        ? const <String>[]
+        : _foldersForCountry(hideSnap, countryCode);
     await showDialog<void>(
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.68),
@@ -6403,6 +7012,39 @@ class IptvResultsViewState extends State<IptvResultsView>
                   label: 'Full guide',
                   onPressed: () => _openSchedulePane(channel),
                 ),
+              if (hideSnap != null) ...[
+                nextTile(
+                  icon: Icons.visibility_off_outlined,
+                  label: 'Hide this channel',
+                  onPressed: () => unawaited(_quickHideChannel(channel)),
+                ),
+                if (folder != null)
+                  nextTile(
+                    icon: Icons.folder_off_outlined,
+                    label: 'Hide folder "$folder"',
+                    onPressed: () => unawaited(
+                      _quickHideFolders([folder], 'folder "$folder"'),
+                    ),
+                  ),
+                if (countryCode != null && countryFolders.length > 1)
+                  nextTile(
+                    icon: Icons.public_off_rounded,
+                    label:
+                        'Hide all "$countryCode|" folders '
+                        '(${countryFolders.length})',
+                    onPressed: () => unawaited(
+                      _quickHideFolders(
+                        countryFolders,
+                        'all "$countryCode|" folders',
+                      ),
+                    ),
+                  ),
+                nextTile(
+                  icon: Icons.visibility_outlined,
+                  label: 'Hidden items',
+                  onPressed: () => unawaited(_showHiddenItems()),
+                ),
+              ],
             ],
           ),
         );
@@ -6543,7 +7185,7 @@ class IptvResultsViewState extends State<IptvResultsView>
             entry.channel,
             programme: _spotlightProgrammeShown.value,
           ),
-          onChannelActivate: (entry) => unawaited(_playChannel(entry.channel)),
+          onChannelActivate: (entry) => unawaited(_activateLive(entry.channel)),
           onProgrammeActivate: _activateSpotlightProgramme,
           // Keep short programmes readable on a television: the preceding
           // half-hour ruler interval plus the following hour.
@@ -6584,7 +7226,7 @@ class IptvResultsViewState extends State<IptvResultsView>
   ) {
     final now = DateTime.now();
     if (programme.airsAt(now)) {
-      unawaited(_playChannel(entry.channel));
+      unawaited(_activateLive(entry.channel));
       return;
     }
     if (IptvEpgService.isCatchupAvailable(entry.channel, programme)) {
@@ -6652,6 +7294,10 @@ class IptvResultsViewState extends State<IptvResultsView>
                         onOpenRecordings: _pageCanRecord
                             ? () => closeThen(_openScheduledRecordings)
                             : null,
+                        onOpenSports: () => closeThen(_openSportsHub),
+                        onManageGuides: () => closeThen(
+                          () => unawaited(_manageExtraGuides()),
+                        ),
                         onNewList: () =>
                             closeThen(() => unawaited(_promptCreateList())),
                         onAddPlaylist: () => closeThen(_navigateToSettings),
@@ -6719,6 +7365,7 @@ class IptvResultsViewState extends State<IptvResultsView>
           onDownArrowPressed: _focusFirstChannel,
           onOpenRecordings: _pageCanRecord ? _openScheduledRecordings : null,
           recordingLive: _anyRecordingLive,
+          onOpenSports: _openSportsHub,
           onCategoryOptions: _canShowCategoryOptions
               ? _promptCategoryOptions
               : null,
@@ -7421,6 +8068,7 @@ class IptvResultsViewState extends State<IptvResultsView>
     if (_channelPreviewEnabled) {
       _retunePreview(channel);
     } else {
+      _okPreviewChannel = null;
       _stopPreviewPlayback();
     }
     // Keep the stage's Record↔Stop honest for whichever channel is focused
@@ -7513,6 +8161,7 @@ class IptvResultsViewState extends State<IptvResultsView>
   /// Empty the stage entirely (playlist switch, sidebar open) and abandon any
   /// in-flight resolve.
   void _clearPreview() {
+    _okPreviewChannel = null;
     _stopPreviewPlayback();
     _spotlightProgrammeShown.value = null;
     _previewShown.value = null;
@@ -7588,7 +8237,7 @@ class IptvResultsViewState extends State<IptvResultsView>
                       child: Text(
                         _channelPreviewEnabled
                             ? 'Scroll channels through the arrow to preview'
-                            : 'Preview is off · choose Watch fullscreen',
+                            : 'OK: preview here  ·  OK again: fullscreen',
                         style: TextStyle(
                           color: app.seeAll.accent2.withValues(alpha: 0.66),
                           fontSize: 11.5,
@@ -7668,12 +8317,12 @@ class IptvResultsViewState extends State<IptvResultsView>
               valueListenable: _previewShowing,
               builder: (context, showing, _) => _IptvStageFloor(
                 channel: ch,
-                tuning: _channelPreviewEnabled && ch != null && !showing,
+                tuning: _previewActiveFor(ch) && ch != null && !showing,
               ),
             ),
             // Startup launch owns the screen: the stage's 900ms dwell would
             // otherwise open a SECOND live stream under the launching player.
-            if (ch != null && _channelPreviewEnabled && !_startupLaunchActive)
+            if (ch != null && _previewActiveFor(ch) && !_startupLaunchActive)
               ValueListenableBuilder<String?>(
                 valueListenable: _previewStreamUrl,
                 builder: (context, streamUrl, _) {
@@ -7724,7 +8373,7 @@ class IptvResultsViewState extends State<IptvResultsView>
                 builder: (context, showing, _) => _IptvStageChip(
                   channel: ch,
                   showing: showing,
-                  previewEnabled: _channelPreviewEnabled,
+                  previewEnabled: _previewActiveFor(ch),
                 ),
               ),
             ),
@@ -8232,6 +8881,10 @@ class _SpotlightCategoryPickerDialogState
   late final int _selectedIndex;
   late final ScrollController _scrollController;
   late final FocusNode _selectedFocusNode;
+  final TextEditingController _query = TextEditingController();
+
+  /// Lower-cased, trimmed search text. Empty = the full, unfiltered list.
+  String _q = '';
 
   @override
   void initState() {
@@ -8255,6 +8908,7 @@ class _SpotlightCategoryPickerDialogState
 
   @override
   void dispose() {
+    _query.dispose();
     _scrollController.dispose();
     _selectedFocusNode.dispose();
     super.dispose();
@@ -8262,10 +8916,30 @@ class _SpotlightCategoryPickerDialogState
 
   void _pick(String value) => Navigator.of(context).pop(value);
 
+  /// Hundreds of provider folders are unusable with a D-pad alone, so the
+  /// picker can be narrowed by typing ("cricket", "uk", "4k").
+  void _setQuery(String raw) {
+    final next = raw.trim().toLowerCase();
+    if (next == _q) return;
+    setState(() => _q = next);
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
+  List<String> get _visibleCategories => _q.isEmpty
+      ? widget.categories
+      : [
+          for (final c in widget.categories)
+            if (c.toLowerCase().contains(_q)) c,
+        ];
+
   @override
   Widget build(BuildContext context) {
     final t = IptvStyleTokens.spotlight;
     final size = MediaQuery.sizeOf(context);
+    final filtering = _q.isNotEmpty;
+    final visible = _visibleCategories;
+    // "All channels" only makes sense for the unfiltered list.
+    final leading = filtering ? 0 : 1;
     return TvHeldKeyGuard(
       child: Dialog(
         key: const ValueKey<String>('spotlight-category-picker'),
@@ -8283,7 +8957,7 @@ class _SpotlightCategoryPickerDialogState
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(24, 20, 24, 14),
+                padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
                 child: Row(
                   children: [
                     Expanded(
@@ -8299,70 +8973,127 @@ class _SpotlightCategoryPickerDialogState
                   ],
                 ),
               ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Focus(
+                  canRequestFocus: false,
+                  skipTraversal: true,
+                  onKeyEvent: (node, event) {
+                    if (event is KeyDownEvent &&
+                        event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                      FocusScope.of(
+                        context,
+                      ).focusInDirection(TraversalDirection.down);
+                      return KeyEventResult.handled;
+                    }
+                    return KeyEventResult.ignored;
+                  },
+                  child: TextField(
+                  key: const ValueKey<String>('spotlight-category-search'),
+                  controller: _query,
+                  onChanged: _setQuery,
+                  textInputAction: TextInputAction.search,
+                  style: TextStyle(color: t.fg),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'Search ${widget.categories.length} folders…',
+                    hintStyle: TextStyle(color: t.fgDim),
+                    prefixIcon: Icon(Icons.search_rounded, color: t.fgDim),
+                    suffixIcon: filtering
+                        ? IconButton(
+                            tooltip: 'Clear',
+                            icon: Icon(Icons.close_rounded, color: t.fgDim),
+                            onPressed: () {
+                              _query.clear();
+                              _setQuery('');
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: Colors.white.withValues(alpha: 0.06),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+                ),
+              ),
               Divider(height: 1, color: t.hairline),
               Expanded(
-                child: ListView.builder(
-                  key: const ValueKey<String>('spotlight-category-list'),
-                  controller: _scrollController,
-                  itemExtent: _itemExtent,
-                  itemCount: 1 + widget.categories.length,
-                  itemBuilder: (context, index) {
-                    if (index == 0) {
-                      final selected = _selectedIndex == 0;
-                      return ListTile(
-                        key: selected
-                            ? const ValueKey<String>(
-                                'spotlight-selected-category-tile',
-                              )
-                            : null,
-                        focusNode: selected ? _selectedFocusNode : null,
-                        autofocus: selected,
-                        selected: selected,
-                        selectedTileColor: t.selectedTint,
-                        leading: Icon(Icons.apps_rounded, color: t.accent),
-                        title: Text(
-                          'All channels',
-                          style: TextStyle(color: t.fg),
-                        ),
-                        trailing: Text(
-                          '${widget.allChannelCount}',
+                child: filtering && visible.isEmpty
+                    ? Center(
+                        child: Text(
+                          'No folder matches "$_q"',
                           style: TextStyle(color: t.fgDim),
                         ),
-                        onTap: () => _pick(widget.allCategoryValue),
-                      );
-                    }
-                    final category = widget.categories[index - 1];
-                    final selected = index == _selectedIndex;
-                    return ListTile(
-                      key: selected
-                          ? const ValueKey<String>(
-                              'spotlight-selected-category-tile',
-                            )
-                          : null,
-                      focusNode: selected ? _selectedFocusNode : null,
-                      autofocus: selected,
-                      selected: selected,
-                      selectedTileColor: t.selectedTint,
-                      leading: Icon(
-                        selected
-                            ? Icons.check_circle_rounded
-                            : Icons.folder_outlined,
-                        color: selected ? t.accent : t.fgDim,
+                      )
+                    : ListView.builder(
+                        key: const ValueKey<String>('spotlight-category-list'),
+                        controller: _scrollController,
+                        itemExtent: _itemExtent,
+                        itemCount: leading + visible.length,
+                        itemBuilder: (context, index) {
+                          if (index == 0 && !filtering) {
+                            final selected = _selectedIndex == 0;
+                            return ListTile(
+                              key: selected
+                                  ? const ValueKey<String>(
+                                      'spotlight-selected-category-tile',
+                                    )
+                                  : null,
+                              focusNode: selected ? _selectedFocusNode : null,
+                              autofocus: selected,
+                              selected: selected,
+                              selectedTileColor: t.selectedTint,
+                              leading: Icon(Icons.apps_rounded, color: t.accent),
+                              title: Text(
+                                'All channels',
+                                style: TextStyle(color: t.fg),
+                              ),
+                              trailing: Text(
+                                '${widget.allChannelCount}',
+                                style: TextStyle(color: t.fgDim),
+                              ),
+                              onTap: () => _pick(widget.allCategoryValue),
+                            );
+                          }
+                          final category = visible[index - leading];
+                          final selected =
+                              category == widget.selectedCategory;
+                          // The restored-focus node belongs to the selected
+                          // row of the UNFILTERED list only.
+                          final owner = selected && !filtering;
+                          return ListTile(
+                            key: owner
+                                ? const ValueKey<String>(
+                                    'spotlight-selected-category-tile',
+                                  )
+                                : null,
+                            focusNode: owner ? _selectedFocusNode : null,
+                            autofocus: owner,
+                            selected: selected,
+                            selectedTileColor: t.selectedTint,
+                            leading: Icon(
+                              selected
+                                  ? Icons.check_circle_rounded
+                                  : Icons.folder_outlined,
+                              color: selected ? t.accent : t.fgDim,
+                            ),
+                            title: Text(
+                              category,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: t.fg),
+                            ),
+                            trailing: Text(
+                              '${widget.categoryCounts[category] ?? 0}',
+                              style: TextStyle(color: t.fgDim),
+                            ),
+                            onTap: () => _pick(category),
+                          );
+                        },
                       ),
-                      title: Text(
-                        category,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: t.fg),
-                      ),
-                      trailing: Text(
-                        '${widget.categoryCounts[category] ?? 0}',
-                        style: TextStyle(color: t.fgDim),
-                      ),
-                      onTap: () => _pick(category),
-                    );
-                  },
-                ),
               ),
               if (widget.showOptionsHint) ...[
                 Divider(height: 1, color: t.hairline),
