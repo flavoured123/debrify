@@ -1,0 +1,301 @@
+# Personal build of Debrify with the IPTV / Sports Hub changes.
+#
+# Produces "Debrify Personal" (package com.debrify.app.personal), which
+# installs NEXT TO the official Debrify app instead of replacing it.
+#
+# Runs automatically when changed app code is pushed to main, or manually
+# from the Actions tab ("Run workflow").
+#
+# Output:
+#   * Android APK attached to the release "personal-android" — a fixed,
+#     direct download link that the Fire TV "Downloader" app can open.
+#   * Windows portable ZIP attached to the release "personal-windows"
+#     (manual runs only).
+#
+# Optional repository secrets (Settings → Secrets and variables → Actions):
+#   TMDB_READ_ACCESS_TOKEN  movie/show artwork. Not needed for IPTV.
+#   KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_PASSWORD, KEY_ALIAS
+#                           your own permanent signing key. Without them the
+#                           workflow creates one and keeps it in the Actions
+#                           cache (see the signing step for the trade-off).
+
+name: Personal build
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'What to build'
+        type: choice
+        default: android
+        options:
+          - android
+          - windows
+          - both
+  push:
+    branches: [main]
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/personal-build.yml'
+
+concurrency:
+  group: personal-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: '3.44.8'
+  # Files changed by this mod: analysed first so a mistake fails in ~3 minutes
+  # instead of after the 15-minute Android build.
+  MOD_FILES: >-
+    lib/services/iptv_sports/sports_catalog.dart
+    lib/services/iptv_sports/sports_service.dart
+    lib/screens/iptv/sports_hub_screen.dart
+    lib/widgets/iptv/iptv_results_view.dart
+    lib/widgets/iptv/iptv_filters.dart
+    lib/widgets/iptv/spotlight/spotlight_rail.dart
+    lib/services/storage_service.dart
+    lib/services/iptv_epg_service.dart
+    lib/services/xmltv_epg_source.dart
+    lib/services/iptv_catalog_db.dart
+    lib/services/profiles/profile_database_snapshot.dart
+    lib/utils/iptv_name_tags.dart
+    lib/utils/iptv_title_match.dart
+    lib/services/iptv_vod_info_service.dart
+    lib/services/iptv_extra_guides.dart
+    lib/widgets/iptv/iptv_sources_sheet.dart
+
+jobs:
+  android:
+    if: github.event_name == 'push' || inputs.target == 'android' || inputs.target == 'both'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build config (TMDB token is optional)
+        shell: python
+        env:
+          TMDB_READ_ACCESS_TOKEN: ${{ secrets.TMDB_READ_ACCESS_TOKEN }}
+        run: |
+          import json, os
+          from pathlib import Path
+          token = os.environ.get("TMDB_READ_ACCESS_TOKEN", "").strip()
+          if not token:
+              print("::warning::No TMDB_READ_ACCESS_TOKEN secret - IPTV works, but TMDB "
+                    "collections, search and artwork on the home screen will not load. "
+                    "Add the secret and run the build again.")
+          config = Path(os.environ["RUNNER_TEMP"]) / "debrify-build-config.json"
+          config.write_text(json.dumps({"TMDB_READ_ACCESS_TOKEN": token}), encoding="utf-8")
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Check the modified files (fails fast on mistakes)
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings $MOD_FILES
+
+      # Signing. The same key must sign every build, or Android refuses to
+      # update the installed app ("App not installed" / signature conflict).
+      #   1. Your own secrets, if you added them: permanent.
+      #   2. Otherwise a key generated once and kept in the Actions cache.
+      #      GitHub drops caches unused for 7 days; after a long break the
+      #      next build gets a NEW key and you must uninstall Debrify
+      #      Personal once before installing it. Add the secrets to avoid that.
+      - name: Restore personal signing key
+        id: keystore-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.debrify-personal-keystore
+          key: debrify-personal-keystore-v1
+
+      - name: Prepare signing
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          generated=false
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
+            store_pass="$KEYSTORE_PASSWORD"; key_pass="$KEY_PASSWORD"; alias="$KEY_ALIAS"
+            echo "Signing with the key from repository secrets."
+          else
+            dir="$HOME/.debrify-personal-keystore"
+            store_pass="debrify-personal"; key_pass="debrify-personal"; alias="debrify-personal"
+            if [ ! -f "$dir/release.jks" ]; then
+              mkdir -p "$dir"
+              keytool -genkeypair -v -noprompt \
+                -keystore "$dir/release.jks" -alias "$alias" \
+                -keyalg RSA -keysize 2048 -validity 10000 \
+                -storepass "$store_pass" -keypass "$key_pass" \
+                -dname "CN=Debrify Personal, O=Personal, C=DE"
+              generated=true
+              echo "::warning::Created a NEW signing key. If an older Debrify Personal is installed, uninstall it once before installing this build."
+            else
+              echo "Signing with the cached personal key."
+            fi
+            cp "$dir/release.jks" android/app/release.keystore
+          fi
+          cat > android/key.properties <<EOF
+          storePassword=$store_pass
+          keyPassword=$key_pass
+          keyAlias=$alias
+          storeFile=release.keystore
+          EOF
+          echo "generated=$generated" >> "$GITHUB_OUTPUT"
+
+      - name: Save personal signing key
+        if: steps.signing.outputs.generated == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.debrify-personal-keystore
+          key: debrify-personal-keystore-v1
+
+      # Universal APK on purpose: several Fire TV models run a 32-bit system
+      # even on 64-bit chips, and one file covers every box.
+      - name: Build APK (Debrify Personal)
+        env:
+          ORG_GRADLE_PROJECT_debrifyPersonalBuild: 'true'
+          ORG_GRADLE_PROJECT_debrifyLocalDiagnostics: 'false'
+        run: >-
+          flutter build apk --release
+          --dart-define=DEBRIFY_LOCAL_VALIDATION=false
+          --dart-define-from-file="${{ runner.temp }}/debrify-build-config.json"
+
+      - name: Name the APK
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::7}"
+          mkdir -p out
+          cp build/app/outputs/flutter-apk/app-release.apk out/Debrify-Personal.apk
+          cp build/app/outputs/flutter-apk/app-release.apk "out/Debrify-Personal-${short_sha}.apk"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+          ls -lh out
+
+      - name: Upload APK (Actions artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Debrify-Personal-android-${{ steps.apk.outputs.short_sha }}
+          path: out/Debrify-Personal.apk
+          retention-days: 14
+
+      - name: Publish APK to release "personal-android"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release delete personal-android --cleanup-tag --yes 2>/dev/null || true
+          gh release create personal-android \
+            out/Debrify-Personal.apk "out/Debrify-Personal-${{ steps.apk.outputs.short_sha }}.apk" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Debrify Personal (Android) - ${{ steps.apk.outputs.short_sha }}" \
+            --notes "Personal build from commit ${GITHUB_SHA}. Installs next to the official Debrify app."
+          link="https://github.com/${GITHUB_REPOSITORY}/releases/download/personal-android/Debrify-Personal.apk"
+          {
+            echo "## Debrify Personal (Android) is ready"
+            echo ""
+            echo "Direct download (works in the Fire TV *Downloader* app):"
+            echo ""
+            echo "\`$link\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    if: github.event_name == 'workflow_dispatch' && (inputs.target == 'windows' || inputs.target == 'both')
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build config (TMDB token is optional)
+        shell: python
+        env:
+          TMDB_READ_ACCESS_TOKEN: ${{ secrets.TMDB_READ_ACCESS_TOKEN }}
+        run: |
+          import json, os
+          from pathlib import Path
+          token = os.environ.get("TMDB_READ_ACCESS_TOKEN", "").strip()
+          config = Path(os.environ["RUNNER_TEMP"]) / "debrify-build-config.json"
+          config.write_text(json.dumps({"TMDB_READ_ACCESS_TOKEN": token}), encoding="utf-8")
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Windows app
+        run: flutter build windows --release --dart-define=DEBRIFY_LOCAL_VALIDATION=false --dart-define-from-file="${{ runner.temp }}/debrify-build-config.json"
+
+      - name: Zip portable app
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath out\Debrify-Personal-Windows.zip -Force
+          Get-Item out\Debrify-Personal-Windows.zip | Format-List Name,Length
+
+      - name: Upload ZIP (Actions artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Debrify-Personal-windows
+          path: out/Debrify-Personal-Windows.zip
+          retention-days: 14
+
+      - name: Publish ZIP to release "personal-windows"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release delete personal-windows --cleanup-tag --yes 2>/dev/null || true
+          gh release create personal-windows out/Debrify-Personal-Windows.zip \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Debrify Personal (Windows)" \
+            --notes "Portable build from commit ${GITHUB_SHA}. Unzip and run debrify.exe."
