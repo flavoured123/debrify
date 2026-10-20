@@ -1247,7 +1247,7 @@ class _SoonRow extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(
-            width: 74,
+            width: 58,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

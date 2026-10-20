@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../../models/iptv_playlist.dart';
 import '../../../services/iptv_vod_info_service.dart';
+import '../../../utils/iptv_name_tags.dart';
 import '../../../utils/iptv_title_match.dart';
 import '../styles/iptv_style.dart';
 
@@ -111,7 +112,7 @@ class _SpotlightVodHeroState extends State<SpotlightVodHero> {
 
   Widget _content(IptvStyleTokens t, IptvChannel ch, IptvVodInfo? info) {
     final a = ch.attributes;
-    final title = iptvDisplayTitle(ch.name);
+    final title = iptvStripTags(ch.name).trim();
     final quality = iptvCopyQualityLabel(ch.name);
     String? clean(String? v) {
       final s = v?.trim();
@@ -137,8 +138,7 @@ class _SpotlightVodHeroState extends State<SpotlightVodHero> {
 
     final meta = <String>[
       if (year != null) year,
-      if (duration != null && iptvNiceDuration(duration).isNotEmpty)
-        iptvNiceDuration(duration),
+      if (duration != null && duration != '00:00:00') duration,
       if (genre != null) genre,
     ];
 

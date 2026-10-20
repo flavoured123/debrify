@@ -37,66 +37,30 @@ class IptvTitleKey {
     final b = other.year;
     if (a != null && b != null && a != b) return false;
     if (key == other.key) return true;
-    // A provider code the prefix rules did not catch, glued in front of the
-    // title ("nf" + "thesecretwoman"). Only accepted when the leftover IS a
-    // known provider code — "the" + "batman" must stay two different films.
+    // A folder code the prefix rules did not catch ("nf", "top", "amz")
+    // left in front of the title: "nfthesecretwoman" vs "thesecretwoman".
+    // Only for reasonably long titles, and only a short leftover, so
+    // "it" never matches "split".
     final longer = key.length >= other.key.length ? key : other.key;
     final shorter = identical(longer, key) ? other.key : key;
-    if (shorter.length < 4 || !longer.endsWith(shorter)) return false;
-    final leftover = longer.substring(0, longer.length - shorter.length);
-    return _kProviderCodesLower.contains(leftover);
+    return shorter.length >= 6 &&
+        longer.length - shorter.length <= 6 &&
+        longer.endsWith(shorter);
   }
 }
 
 final RegExp _kYear = RegExp(r'(?<![0-9])(19[2-9][0-9]|20[0-4][0-9])(?![0-9])');
 final RegExp _kBrackets = RegExp(r'[\[\(\{][^\]\)\}]{0,40}[\]\)\}]');
-// Folder / provider codes in front of a title. Deliberately strict so a real
-// title is never cut:
-//  * "XX:" / "XX|" — only a two-letter (country style) code or a known
-//    provider word ("DE:", "NF|", "TOP:"). "CSI: Miami" stays whole.
-//  * "CODE - " — only when every part of the code is a known provider /
-//    quality word ("4K-TOP - ", "TOP - ", "4K-NF - ", "NF - "). "UFO - Der
-//    Film" and "1917 - Remastered" stay whole.
-const Set<String> _kProviderCodes = {
-  '4K', '8K', 'UHD', 'FHD', 'HD', 'SD', 'HDR', 'DV', 'RAW',
-  'TOP', 'NEW', 'VIP', 'HOT', 'BEST', 'MULTI', 'DUAL', 'SUB', 'SUBS',
-  'NF', 'NFX', 'NETFLIX', 'AMZ', 'AMAZON', 'PRIME', 'PV', 'DSNP', 'DSN',
-  'DISNEY', 'ATV', 'ATVP', 'APPLE', 'HMAX', 'MAX', 'HBO', 'HULU', 'PCOK',
-  'SKY', 'WOW', 'JOYN', 'RTL', 'MAGENTA', 'PARAMOUNT', 'PMNT', 'CRAV',
-  'ZEE5', 'HOTSTAR', 'JIO', 'SONY', 'MUBI', 'KIDS', 'IMAX', 'BLURAY', 'WEB',
-};
-const Set<String> _kCountryCodes = {
-  'DE', 'AT', 'CH', 'UK', 'GB', 'US', 'EN', 'IN', 'FR', 'IT', 'ES', 'NL',
-  'BE', 'PL', 'TR', 'AR', 'PT', 'BR', 'SE', 'NO', 'DK', 'FI', 'RU', 'UA',
-  'RO', 'HU', 'CZ', 'SK', 'GR', 'AL', 'RS', 'HR', 'BA', 'BG', 'SI', 'MK',
-  'CA', 'AU', 'NZ', 'IE', 'PK', 'BD', 'LK', 'NP', 'AF', 'IR', 'IL', 'SA',
-  'AE', 'EG', 'MA', 'DZ', 'TN', 'MX', 'LA', 'KR', 'JP', 'CN', 'PH', 'ID',
-  'TH', 'VN', 'MY', 'SG', 'EX', 'KU', 'KH',
-};
-final Set<String> _kProviderCodesLower = {
-  for (final c in _kProviderCodes) c.toLowerCase(),
-};
-final RegExp _kPrefixColon = RegExp(r'^\s*([A-Z0-9+&]{2,9})\s*[:|]\s*');
-final RegExp _kPrefixDash = RegExp(
-  r'^\s*([A-Z0-9+&]{2,9}(?:-[A-Z0-9+&]{1,9})*)\s+[-–—]\s+',
+final RegExp _kPrefixColon = RegExp(
+  r'^\s*[\p{L}\p{N}+&.\- ]{1,14}?\s*[:|]\s*',
+  unicode: true,
 );
-
-String _stripProviderPrefix(String s) {
-  final dash = _kPrefixDash.firstMatch(s);
-  if (dash != null &&
-      dash.group(1)!.split('-').every(_kProviderCodes.contains)) {
-    s = s.substring(dash.end);
-  }
-  final colon = _kPrefixColon.firstMatch(s);
-  if (colon != null) {
-    final code = colon.group(1)!;
-    if (_kCountryCodes.contains(code) || _kProviderCodes.contains(code)) {
-      s = s.substring(colon.end);
-    }
-  }
-  return s;
-}
-
+// "NF - ", "4K-NF - ", "4K-TOP - ": a short code (optionally two joined by
+// a dash) followed by a spaced dash.
+final RegExp _kPrefixDash = RegExp(
+  r'^\s*[\p{L}\p{N}+&]{1,8}(?:-[\p{L}\p{N}+&]{1,8})?\s+[-–—]\s+',
+  unicode: true,
+);
 final RegExp _kSplit = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
 
 /// Release / quality / language decoration that never belongs to a title.
@@ -116,8 +80,13 @@ IptvTitleKey iptvTitleKeyOf(String name) {
     year = int.tryParse(m.group(1)!);
   }
   s = s.replaceAll(_kBrackets, ' ');
-  final stripped = _stripProviderPrefix(s);
-  if (stripped.trim().isNotEmpty) s = stripped;
+  for (var i = 0; i < 2; i++) {
+    final next = s
+        .replaceFirst(_kPrefixColon, '')
+        .replaceFirst(_kPrefixDash, '');
+    if (next == s || next.trim().isEmpty) break;
+    s = next;
+  }
   final words = <String>[];
   for (final raw in s.toLowerCase().split(_kSplit)) {
     if (raw.isEmpty || _kTitleNoise.contains(raw)) continue;
@@ -150,34 +119,4 @@ String iptvCopyQualityLabel(String name) {
   final tier = sportsQualityTier(padded);
   if (tier == 0 && padded.contains(' raw ')) return 'RAW';
   return sportsQualityLabel(tier);
-}
-
-/// Clean title for display: provider tags and folder prefixes removed
-/// ("4K-TOP - Practical Magic 2 (2026) ᴰᴼᴸᴮʸ" -> "Practical Magic 2 (2026)").
-/// The year in brackets is kept; falls back to the raw name if nothing is left.
-String iptvDisplayTitle(String name) {
-  var s = iptvStripTags(name).trim();
-  final next = _stripProviderPrefix(s);
-  // Never leave less than a real title behind.
-  if (next.trim().length >= 2) s = next;
-  s = s.replaceAll(RegExp(r'\s+'), ' ').trim();
-  return s.isEmpty ? name.trim() : s;
-}
-
-/// "02:10:08" / "130 min" -> "2h 10m". Unknown formats are returned as is.
-String iptvNiceDuration(String raw) {
-  final hms = RegExp(r'^(\d{1,2}):(\d{2})(?::(\d{2}))?$').firstMatch(raw.trim());
-  int? minutes;
-  if (hms != null) {
-    minutes = int.parse(hms.group(1)!) * 60 + int.parse(hms.group(2)!);
-  } else {
-    final m = RegExp(r'^(\d{1,3})\s*(?:min|m|mins)?$').firstMatch(raw.trim());
-    if (m != null) minutes = int.parse(m.group(1)!);
-  }
-  if (minutes == null) return raw;
-  if (minutes <= 0) return '';
-  final h = minutes ~/ 60;
-  final m = minutes % 60;
-  if (h == 0) return '${m}m';
-  return m == 0 ? '${h}h' : '${h}h ${m}m';
 }
