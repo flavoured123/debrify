@@ -10,6 +10,7 @@ import '../../services/main_page_bridge.dart';
 import '../../services/app_route_observer.dart';
 import '../../utils/platform_util.dart';
 import '../home/spotlight_card_trailer.dart';
+import '../../services/trailer_timing.dart';
 
 /// Large-screen presentations of a collection's titles. The parent owns
 /// paging, sorting and title actions; focus remains here while details push.
@@ -94,7 +95,7 @@ class TvCollectionTitlesState extends State<TvCollectionTitles>
       setState(() => _previewIdentity = null);
     if (!mounted || !_previewEligible) return;
     final identity = _identity(widget.items[_index]);
-    _trailerDwell = Timer(const Duration(seconds: 2), () {
+    _trailerDwell = Timer(TrailerTiming.cardDwell, () {
       if (!mounted ||
           !_previewEligible ||
           ModalRoute.of(context)?.isCurrent == false ||

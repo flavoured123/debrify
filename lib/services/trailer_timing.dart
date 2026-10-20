@@ -1,0 +1,51 @@
+import 'dart:async';
+
+import 'profiles/profile_preferences.dart';
+
+/// How long a card must stay focused / hovered before its trailer starts.
+///
+/// "Instant" (the default) waits only long enough that cards flown past
+/// while scrolling never start a trailer; "Normal" is the original 2 s.
+class TrailerTiming {
+  TrailerTiming._();
+
+  static const String _key = 'trailer_instant_start';
+  static bool _instant = true;
+  static bool _loaded = false;
+
+  static bool get instant {
+    _ensureLoaded();
+    return _instant;
+  }
+
+  static Duration get cardDwell {
+    _ensureLoaded();
+    return _instant
+        ? const Duration(milliseconds: 450)
+        : const Duration(seconds: 2);
+  }
+
+  static void _ensureLoaded() {
+    if (_loaded) return;
+    _loaded = true;
+    unawaited(load());
+  }
+
+  static Future<bool> load() async {
+    _loaded = true;
+    try {
+      final prefs = await ProfilePreferences.instance();
+      _instant = prefs.getBool(_key) ?? true;
+    } catch (_) {}
+    return _instant;
+  }
+
+  static Future<void> setInstant(bool value) async {
+    _instant = value;
+    _loaded = true;
+    try {
+      final prefs = await ProfilePreferences.instance();
+      await prefs.setBool(_key, value);
+    } catch (_) {}
+  }
+}

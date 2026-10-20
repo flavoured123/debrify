@@ -17,6 +17,7 @@ import 'home_sections_filter_page.dart';
 import 'spotlight_hero_source_page.dart';
 import 'tv_home_style_page.dart';
 import 'widgets/settings_widgets.dart';
+import '../../services/trailer_timing.dart';
 
 class HomePageSettingsPage extends StatefulWidget {
   const HomePageSettingsPage({super.key});
@@ -46,6 +47,7 @@ class _HomePageSettingsPageState extends State<HomePageSettingsPage> {
   bool _mdblistConnected = false;
   bool _trailerAutoplayEnabled = false;
   bool _heroTrailerEnabled = true;
+  bool _instantTrailers = TrailerTiming.instant;
   bool _ambientTrailerAudioEnabled = true;
   int _ambientTrailerVolume = 70;
   bool _tvTrailerUnderlayEnabled = true;
@@ -178,6 +180,9 @@ class _HomePageSettingsPageState extends State<HomePageSettingsPage> {
     super.initState();
     AnalyticsService.screenView('home_page_settings');
     _loadSettings();
+    TrailerTiming.load().then((v) {
+      if (mounted && v != _instantTrailers) setState(() => _instantTrailers = v);
+    });
   }
 
   @override
@@ -886,6 +891,21 @@ class _HomePageSettingsPageState extends State<HomePageSettingsPage> {
                             );
                           }
                         }
+                      },
+                    ),
+                    SettingsToggleTile(
+                      icon: Icons.bolt_rounded,
+                      title: 'Instant Trailers',
+                      subtitle:
+                          'Start a card\'s trailer almost immediately when you '
+                          'rest on it (off: after 2 seconds).',
+                      subtitleMaxLines: 2,
+                      value: _instantTrailers,
+                      onChanged: (value) async {
+                        await TrailerTiming.setInstant(value);
+                        if (!mounted) return;
+                        setState(() => _instantTrailers = value);
+                        MainPageBridge.notifyHomeSettingsChanged();
                       },
                     ),
                     SettingsToggleTile(

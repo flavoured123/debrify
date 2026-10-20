@@ -36,6 +36,7 @@ import '../movie_watched_badge.dart';
 import '../../utils/platform_util.dart';
 import '../../utils/wide_touch_scale.dart';
 import '../../utils/spotlight_interaction_policy.dart';
+import '../../services/trailer_timing.dart';
 
 /// What a card is, once a shelf stops being a list of TITLES.
 ///
@@ -3073,7 +3074,7 @@ class _CardState extends State<_Card> with MetadataPresentationMixin<_Card> {
     _trailerPlaying = false;
     if (_trailerAttempted || !_activeCard || _moving || !_canExpand || !widget.trailerEnabled ||
         MediaQuery.disableAnimationsOf(context)) return;
-    _trailerDwell = Timer(const Duration(seconds: 2), () {
+    _trailerDwell = Timer(TrailerTiming.cardDwell, () {
       if (!mounted || !_activeCard || _moving || !widget.trailerEnabled || !_canExpand ||
           ModalRoute.of(context)?.isCurrent == false || !TickerMode.of(context) ||
           (WidgetsBinding.instance.lifecycleState != null &&
