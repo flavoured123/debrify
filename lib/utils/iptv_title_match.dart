@@ -120,3 +120,37 @@ String iptvCopyQualityLabel(String name) {
   if (tier == 0 && padded.contains(' raw ')) return 'RAW';
   return sportsQualityLabel(tier);
 }
+
+/// Clean title for display: provider tags and folder prefixes removed
+/// ("4K-TOP - Practical Magic 2 (2026) ᴰᴼᴸᴮʸ" -> "Practical Magic 2 (2026)").
+/// The year in brackets is kept; falls back to the raw name if nothing is left.
+String iptvDisplayTitle(String name) {
+  var s = iptvStripTags(name).trim();
+  for (var i = 0; i < 2; i++) {
+    final next = s
+        .replaceFirst(_kPrefixColon, '')
+        .replaceFirst(_kPrefixDash, '');
+    if (next == s || next.trim().isEmpty) break;
+    s = next;
+  }
+  s = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return s.isEmpty ? name.trim() : s;
+}
+
+/// "02:10:08" / "130 min" -> "2h 10m". Unknown formats are returned as is.
+String iptvNiceDuration(String raw) {
+  final hms = RegExp(r'^(\d{1,2}):(\d{2})(?::(\d{2}))?$').firstMatch(raw.trim());
+  int? minutes;
+  if (hms != null) {
+    minutes = int.parse(hms.group(1)!) * 60 + int.parse(hms.group(2)!);
+  } else {
+    final m = RegExp(r'^(\d{1,3})\s*(?:min|m|mins)?$').firstMatch(raw.trim());
+    if (m != null) minutes = int.parse(m.group(1)!);
+  }
+  if (minutes == null) return raw;
+  if (minutes <= 0) return '';
+  final h = minutes ~/ 60;
+  final m = minutes % 60;
+  if (h == 0) return '${m}m';
+  return m == 0 ? '${h}h' : '${h}h ${m}m';
+}

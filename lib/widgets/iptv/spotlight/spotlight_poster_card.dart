@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../models/iptv_playlist.dart';
-import '../../../utils/iptv_name_tags.dart';
 import '../../../utils/iptv_title_match.dart';
 import '../../../utils/tv_keys.dart' show TvHoldOk, isActivateOrSpaceKey;
 import '../styles/iptv_style.dart';
@@ -87,7 +86,7 @@ class _SpotlightPosterCardState extends State<SpotlightPosterCard> {
   Widget build(BuildContext context) {
     final t = IptvStyleTokens.spotlight;
     final ch = widget.channel;
-    final title = iptvStripTags(ch.name).trim();
+    final title = iptvDisplayTitle(ch.name);
     final quality = iptvCopyQualityLabel(ch.name);
     final logo = ch.logoUrl;
     final progress = widget.progress;
