@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/iptv_playlist.dart';
 import '../../services/iptv_vod_info_service.dart';
+import '../../services/tmdb_metadata_repository.dart';
 import '../../utils/iptv_title_match.dart';
 import '../../utils/tv_keys.dart' show TvHeldKeyGuard;
 import 'styles/iptv_style.dart';
@@ -17,14 +18,15 @@ class IptvSourceChoice {
   final IptvSourceAction action;
   final IptvChannel channel;
 
-  /// YouTube id for [IptvSourceAction.trailer].
+  /// Panel YouTube id for [IptvSourceAction.trailer], when it has one (the
+  /// caller falls back to TMDB / IMDb otherwise).
   final String? youtubeId;
 
   const IptvSourceChoice.play(this.channel)
     : action = IptvSourceAction.play,
       youtubeId = null;
 
-  const IptvSourceChoice.trailer(this.channel, String this.youtubeId)
+  const IptvSourceChoice.trailer(this.channel, this.youtubeId)
     : action = IptvSourceAction.trailer;
 }
 
@@ -193,7 +195,12 @@ class _IptvSourcesDialog extends StatelessWidget {
                         future: info,
                         builder: (context, snap) {
                           final id = snap.data?.youtubeId;
-                          if (id == null) return const SizedBox.shrink();
+                          // Without a panel trailer the caller can still
+                          // find one through TMDB / IMDb.
+                          if (id == null &&
+                              !TmdbMetadataRepository.instance.configured) {
+                            return const SizedBox.shrink();
+                          }
                           return OutlinedButton.icon(
                             style: OutlinedButton.styleFrom(
                               foregroundColor: t.fg,

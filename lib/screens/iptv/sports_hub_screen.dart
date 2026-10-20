@@ -14,6 +14,7 @@ import '../../models/playlist_view_mode.dart';
 import '../../services/iptv_sports/sports_catalog.dart';
 import '../../services/iptv_sports/sports_service.dart';
 import '../../services/video_player_launcher.dart';
+import '../../widgets/iptv/styles/iptv_style.dart';
 
 enum _HubTab { live, upcoming, channels }
 
@@ -276,21 +277,83 @@ class _SportsHubScreenState extends State<SportsHubScreen> {
     final upcoming = _upcomingEvents(now);
     final channels = _channelGroups();
 
-    return Scaffold(
-      backgroundColor: cs.surface,
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _header(context, channels.length),
-            _sportChips(context),
-            _tabBar(context, live.length, upcoming.length, channels.length),
-            if (_tab == _HubTab.upcoming) _dayChips(context, now),
-            if (_scanning || _loadingEvents)
-              const LinearProgressIndicator(minHeight: 2),
-            Expanded(child: _body(context, now, live, upcoming, channels)),
-          ],
+    return Theme(
+      data: _hubTheme(context),
+      child: Builder(
+        builder: (context) => Scaffold(
+          backgroundColor: IptvStyleTokens.spotlight.bg,
+          body: SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _header(context, channels.length),
+                _sportChips(context),
+                _tabBar(
+                  context,
+                  live.length,
+                  upcoming.length,
+                  channels.length,
+                ),
+                if (_tab == _HubTab.upcoming) _dayChips(context, now),
+                if (_scanning || _loadingEvents)
+                  const LinearProgressIndicator(minHeight: 2),
+                Expanded(
+                  child: _body(context, now, live, upcoming, channels),
+                ),
+                const _HubKeyHints(),
+              ],
+            ),
+          ),
         ),
+      ),
+    );
+  }
+
+  /// The modern IPTV look (deep navy, light cards) for the whole hub,
+  /// whatever the app theme is.
+  static ThemeData _hubTheme(BuildContext context) {
+    final t = IptvStyleTokens.spotlight;
+    final base = Theme.of(context);
+    final scheme =
+        ColorScheme.fromSeed(
+          seedColor: t.accent,
+          brightness: Brightness.dark,
+        ).copyWith(
+          surface: t.bg,
+          onSurface: t.fg,
+          onSurfaceVariant: t.fgDim,
+          surfaceContainerHigh: t.panel,
+          surfaceContainerHighest: const Color(0xFF13263D),
+          primary: t.accent,
+          onPrimary: Colors.white,
+          primaryContainer: const Color(0xFF16406F),
+          onPrimaryContainer: t.fg,
+          secondaryContainer: const Color(0xFF1C3150),
+          onSecondaryContainer: t.fg,
+          outline: t.hairline2,
+          outlineVariant: t.hairline,
+        );
+    return base.copyWith(
+      colorScheme: scheme,
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: t.bg,
+      canvasColor: t.bg,
+      iconTheme: IconThemeData(color: t.fg),
+      textTheme: base.textTheme.apply(
+        bodyColor: t.fg,
+        displayColor: t.fg,
+      ),
+      chipTheme: base.chipTheme.copyWith(
+        backgroundColor: t.panel,
+        selectedColor: t.fg,
+        side: BorderSide(color: t.hairline2),
+        shape: const StadiumBorder(),
+        labelStyle: TextStyle(color: t.fg, fontWeight: FontWeight.w700),
+        secondaryLabelStyle: TextStyle(
+          color: t.bg,
+          fontWeight: FontWeight.w800,
+        ),
+        checkmarkColor: t.bg,
       ),
     );
   }
@@ -525,12 +588,84 @@ class _SportsHubScreenState extends State<SportsHubScreen> {
     }
     switch (_tab) {
       case _HubTab.live:
-        return _eventList(context, now, live, upcomingStyle: false);
+        return _withSoonColumn(
+          context,
+          now,
+          _eventList(context, now, live, upcomingStyle: false),
+        );
       case _HubTab.upcoming:
         return _eventList(context, now, upcoming, upcomingStyle: true);
       case _HubTab.channels:
         return _channelList(context, channels);
     }
+  }
+
+  /// Wide screens: a "Starting soon" column beside the live cards.
+  Widget _withSoonColumn(BuildContext context, DateTime now, Widget main) {
+    final soon = [
+      for (final e in _events)
+        if (_eventAllowed(e) && e.programme.start.isAfter(now)) e,
+    ]..sort((a, b) => a.programme.start.compareTo(b.programme.start));
+    if (soon.isEmpty) return main;
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (c.maxWidth < 1000) return main;
+        final t = IptvStyleTokens.spotlight;
+        final top = soon.take(8).toList();
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: main),
+            Container(
+              width: 320,
+              margin: const EdgeInsets.fromLTRB(0, 4, 12, 12),
+              decoration: BoxDecoration(
+                color: t.panel,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: t.hairline),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 14, 18, 6),
+                    child: Text(
+                      'STARTING SOON',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.4,
+                        color: t.fgFaint,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      itemCount: top.length,
+                      itemBuilder: (context, i) {
+                        final e = top[i];
+                        return _SoonRow(
+                          event: e,
+                          day: _dayLabel(e.programme.start, now),
+                          onPlay: () => _play(e.channel.best, queue: [
+                            for (final x in top) x.channel,
+                          ]),
+                          onSources: () => _pickSource(
+                            [e.channel, ...e.alsoOn],
+                            e.programme.title,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Widget _eventList(
@@ -571,40 +706,71 @@ class _SportsHubScreenState extends State<SportsHubScreen> {
             for (final e in events)
               if (!mine.contains(e)) e,
           ];
-    final rows = <Object>[];
+    // Sections: my teams first, then all matches (live) or one per day.
+    final sections = <({String? header, List<SportsEvent> events})>[];
     if (mine.isNotEmpty) {
-      rows.add('★ My teams');
-      rows.addAll(mine);
-      if (others.isNotEmpty && !upcomingStyle) rows.add('All matches');
+      sections.add((header: '★ My teams', events: mine.toList()));
     }
-    String? lastDay;
-    for (final e in others) {
-      if (upcomingStyle) {
-        final day = _dayLabel(e.programme.start, now);
-        if (day != lastDay) {
-          rows.add(day);
-          lastDay = day;
+    if (upcomingStyle) {
+      String? day;
+      var bucket = <SportsEvent>[];
+      for (final e in others) {
+        final label = _dayLabel(e.programme.start, now);
+        if (label != day) {
+          day = label;
+          bucket = <SportsEvent>[];
+          sections.add((header: label, events: bucket));
         }
+        bucket.add(e);
       }
-      rows.add(e);
+    } else if (others.isNotEmpty) {
+      sections.add((
+        header: mine.isNotEmpty ? 'All matches' : null,
+        events: others.toList(),
+      ));
     }
     final queue = [for (final e in events) e.channel];
-    final firstEvent = rows.indexWhere((r) => r is SportsEvent);
-    return ListView.builder(
-      padding: const EdgeInsets.only(bottom: 24),
-      itemCount: rows.length,
-      itemBuilder: (context, i) {
-        final row = rows[i];
-        if (row is String) return _DayHeader(row);
-        final e = row as SportsEvent;
-        return _EventCard(
-          event: e,
-          now: now,
-          mine: mine.contains(e),
-          autofocus: i == firstEvent,
-          onPlay: () => _play(e.channel.best, queue: queue),
-          onSources: () =>
-              _pickSource([e.channel, ...e.alsoOn], e.programme.title),
+    var focusGiven = false;
+    return LayoutBuilder(
+      builder: (context, c) {
+        final cols = c.maxWidth >= 1250
+            ? 3
+            : c.maxWidth >= 720
+            ? 2
+            : 1;
+        return CustomScrollView(
+          slivers: [
+            for (final section in sections) ...[
+              if (section.header != null)
+                SliverToBoxAdapter(child: _DayHeader(section.header!)),
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                sliver: SliverGrid(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cols,
+                    mainAxisExtent: 178,
+                  ),
+                  delegate: SliverChildBuilderDelegate((context, i) {
+                    final e = section.events[i];
+                    final autofocus = !focusGiven && i == 0;
+                    if (autofocus) focusGiven = true;
+                    return _EventTile(
+                      event: e,
+                      now: now,
+                      mine: mine.contains(e),
+                      autofocus: autofocus,
+                      onPlay: () => _play(e.channel.best, queue: queue),
+                      onSources: () => _pickSource(
+                        [e.channel, ...e.alsoOn],
+                        e.programme.title,
+                      ),
+                    );
+                  }, childCount: section.events.length),
+                ),
+              ),
+            ],
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          ],
         );
       },
     );
@@ -678,13 +844,11 @@ class _HubCardState extends State<_HubCard> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         decoration: BoxDecoration(
-          color: _focused
-              ? cs.primaryContainer.withValues(alpha: 0.6)
-              : cs.surfaceContainerHigh,
+          color: _focused ? const Color(0xFF173458) : cs.surfaceContainerHigh,
           borderRadius: radius,
           border: Border.all(
-            color: _focused ? cs.primary : Colors.transparent,
-            width: 2,
+            color: _focused ? cs.onSurface : cs.outlineVariant,
+            width: _focused ? 2.5 : 1,
           ),
         ),
         child: Material(
@@ -694,6 +858,7 @@ class _HubCardState extends State<_HubCard> {
             borderRadius: radius,
             onTap: widget.onTap,
             onLongPress: widget.onLongPress,
+            onSecondaryTap: widget.onLongPress,
             onFocusChange: (v) {
               setState(() => _focused = v);
               if (v) {
@@ -718,7 +883,8 @@ class _HubCardState extends State<_HubCard> {
 class _Logo extends StatelessWidget {
   final String? url;
   final IconData fallback;
-  const _Logo({required this.url, required this.fallback});
+  final double size;
+  const _Logo({required this.url, required this.fallback, this.size = 52});
 
   @override
   Widget build(BuildContext context) {
@@ -726,9 +892,9 @@ class _Logo extends StatelessWidget {
     final placeholder = Icon(fallback, color: cs.onSurfaceVariant);
     final u = url;
     return Container(
-      width: 52,
-      height: 52,
-      padding: const EdgeInsets.all(6),
+      width: size,
+      height: size,
+      padding: EdgeInsets.all(size > 40 ? 6 : 3),
       decoration: BoxDecoration(
         color: cs.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(12),
@@ -903,6 +1069,277 @@ class _EventCard extends StatelessWidget {
               onPressed: onSources,
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Live / upcoming match card (modern grid): LIVE + sport + quality on top,
+/// the match title, the channel with "+N more", and the progress.
+class _EventTile extends StatelessWidget {
+  final SportsEvent event;
+  final DateTime now;
+  final bool autofocus;
+  final bool mine;
+  final VoidCallback onPlay;
+  final VoidCallback onSources;
+
+  const _EventTile({
+    required this.event,
+    required this.now,
+    required this.autofocus,
+    required this.onPlay,
+    required this.onSources,
+    this.mine = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = IptvStyleTokens.spotlight;
+    final p = event.programme;
+    final live = event.isLiveAt(now);
+    final best = event.channel.best;
+    final more = event.alsoOn.length + (event.channel.variants.length - 1);
+    final sport = sportDefById(event.sportId)?.label ?? 'Sport';
+    final start = MaterialLocalizations.of(
+      context,
+    ).formatTimeOfDay(TimeOfDay.fromDateTime(p.start));
+    final left = p.stop.difference(now).inMinutes;
+    final progress = p.progressAt(now);
+    return _HubCard(
+      autofocus: autofocus,
+      onTap: onPlay,
+      onLongPress: onSources,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (mine) ...[
+                const Icon(Icons.star_rounded, size: 16, color: Color(0xFFFFD60A)),
+                const SizedBox(width: 5),
+              ],
+              if (event.isReplay)
+                const _Pill('REPLAY')
+              else if (live)
+                _Pill('LIVE', bg: t.rec, fg: Colors.white)
+              else
+                Text(
+                  start,
+                  style: TextStyle(
+                    color: t.accent,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+              const SizedBox(width: 8),
+              Icon(_sportIcon(event.sportId), size: 14, color: t.fgDim),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  sport.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.1,
+                    color: t.fgDim,
+                  ),
+                ),
+              ),
+              _QualityPill(best),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            p.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 16,
+              height: 1.2,
+              fontWeight: FontWeight.w800,
+              color: t.fg,
+            ),
+          ),
+          const Spacer(),
+          Row(
+            children: [
+              _Logo(
+                url: best.channel.logoUrl,
+                fallback: _sportIcon(event.sportId),
+                size: 30,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  event.channel.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12.5, color: t.fgMid),
+                ),
+              ),
+              if (more > 0)
+                Text(
+                  '+$more more',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: t.fgDim,
+                  ),
+                ),
+            ],
+          ),
+          if (live) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      minHeight: 4,
+                      value: progress < 0 ? 0.0 : (progress > 1 ? 1.0 : progress),
+                      color: t.live,
+                      backgroundColor: t.hairline,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  left > 0 ? '$left min left' : 'ending',
+                  style: TextStyle(fontSize: 11.5, color: t.fgDim),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One line of the "Starting soon" column.
+class _SoonRow extends StatelessWidget {
+  final SportsEvent event;
+  final String day;
+  final VoidCallback onPlay;
+  final VoidCallback onSources;
+
+  const _SoonRow({
+    required this.event,
+    required this.day,
+    required this.onPlay,
+    required this.onSources,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = IptvStyleTokens.spotlight;
+    final p = event.programme;
+    final time = MaterialLocalizations.of(
+      context,
+    ).formatTimeOfDay(TimeOfDay.fromDateTime(p.start));
+    return _HubCard(
+      onTap: onPlay,
+      onLongPress: onSources,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 58,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  time,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: t.accent,
+                  ),
+                ),
+                Text(day, style: TextStyle(fontSize: 11, color: t.fgDim)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  p.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: t.fg,
+                  ),
+                ),
+                Text(
+                  event.channel.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11.5, color: t.fgDim),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "What the buttons do" strip at the foot of the hub.
+class _HubKeyHints extends StatelessWidget {
+  const _HubKeyHints();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = IptvStyleTokens.spotlight;
+    Widget hint(String key, String label) => Padding(
+      padding: const EdgeInsets.only(right: 22),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: t.hairline2),
+            ),
+            child: Text(
+              key,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: t.fg,
+              ),
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(label, style: TextStyle(fontSize: 11.5, color: t.fgDim)),
+        ],
+      ),
+    );
+    return Container(
+      height: 34,
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: t.hairline)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            hint('OK / Click', 'Watch in best quality'),
+            hint('Hold OK / Right-click', 'Choose stream / quality'),
+            hint('▲', 'Change sport'),
+          ],
+        ),
       ),
     );
   }

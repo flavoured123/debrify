@@ -37,6 +37,8 @@ import '../../services/video_player_launcher.dart';
 import '../../services/iptv_vod_info_service.dart';
 import '../../services/iptv_extra_guides.dart';
 import '../../services/youtube_service.dart';
+import '../../services/imdb_trailer_service.dart';
+import '../../services/tmdb_metadata_repository.dart';
 import '../../utils/iptv_title_match.dart';
 import '../../utils/iptv_name_tags.dart';
 import '../../utils/iptv_player_paging.dart';
@@ -71,6 +73,7 @@ import 'spotlight/spotlight_folder_sidebar.dart';
 import 'spotlight/spotlight_poster_card.dart';
 import 'spotlight/spotlight_view_toggle.dart';
 import 'spotlight/spotlight_key_hints.dart';
+import 'spotlight/spotlight_vod_hero.dart';
 import 'spotlight/spotlight_live_timeline.dart';
 import 'spotlight/spotlight_programme_hero.dart';
 import 'spotlight/spotlight_rail.dart';
@@ -1160,6 +1163,7 @@ class IptvResultsViewState extends State<IptvResultsView>
     _contentTypeFocusNode.dispose();
     _spotlightCategoryOptionsFocusNode.dispose();
     _spotlightPrimaryFocusNode.dispose();
+    _vodHero.dispose();
     _spotlightRailScope.dispose();
     _spotlightHeroScope.dispose();
     _previewShown.dispose();
@@ -3017,6 +3021,8 @@ class IptvResultsViewState extends State<IptvResultsView>
     // A programme cursor belongs to the outgoing projection. The timeline
     // will publish the reconciled row/programme after its next frame.
     _spotlightProgrammeShown.value = null;
+    // The Movies/Series hero follows the new list's first title.
+    _vodHero.value = null;
     // DB-backed catalog: the filter IS the query — a new facade with the
     // category/search folded into its SQL. Same substring-over-name+group
     // semantics as searchChannels (the search_key column is the same
@@ -4474,7 +4480,7 @@ class IptvResultsViewState extends State<IptvResultsView>
       final choice = await _chooseVodCopy(channel);
       if (choice == null || !mounted) return;
       if (choice.action == IptvSourceAction.trailer) {
-        await _playVodTrailer(choice.youtubeId!, choice.channel.name);
+        await _playVodTrailer(choice.youtubeId, choice.channel);
         return;
       }
       pickedOtherCopy = !identical(choice.channel, channel);
@@ -5293,21 +5299,101 @@ class IptvResultsViewState extends State<IptvResultsView>
     );
   }
 
-  Future<void> _playVodTrailer(String youtubeId, String title) async {
+  /// Trailer for an IPTV movie, trying every source the app knows:
+  /// the panel's YouTube id, then TMDB's YouTube trailer, then IMDb's own
+  /// MP4 (works where YouTube is blocked or throttled).
+  Future<void> _playVodTrailer(String? panelYoutubeId, IptvChannel channel) async {
+    final title = iptvStripTags(channel.name).trim();
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(
+      const SnackBar(
+        content: Text('Loading trailer…'),
+        duration: Duration(seconds: 2),
+      ),
+    );
     YoutubeResolvedStreams? streams;
-    try {
-      streams = await YoutubeService.resolveStreams(youtubeId);
-    } catch (_) {
-      streams = null;
+    Future<YoutubeResolvedStreams?> youtube(String id) async {
+      try {
+        final r = await YoutubeService.resolveStreams(id);
+        final url = r?.playUrl;
+        return (url == null || url.isEmpty) ? null : r;
+      } catch (_) {
+        return null;
+      }
     }
+
+    if (panelYoutubeId != null) streams = await youtube(panelYoutubeId);
+
+    if (streams == null && TmdbMetadataRepository.instance.configured) {
+      final repo = TmdbMetadataRepository.instance;
+      String? tmdbId;
+      final playlist = _selectedPlaylist;
+      if (playlist != null && playlist.isXtreamCodes) {
+        try {
+          tmdbId = (await IptvVodInfoService.fetch(playlist, channel))?.tmdbId;
+        } catch (_) {}
+      }
+      if (tmdbId == null) {
+        try {
+          final key = iptvTitleKeyOf(channel.name);
+          final query = _trailerSearchTitle(channel.name);
+          if (query.isNotEmpty) {
+            final found = await repo.get('search/movie', {
+              'query': query,
+              if (key.year != null) 'year': '${key.year}',
+            });
+            final results = found['results'];
+            if (results is List && results.isNotEmpty) {
+              final first = results.first;
+              if (first is Map && first['id'] != null) {
+                tmdbId = '${first['id']}';
+              }
+            }
+          }
+        } catch (_) {}
+      }
+      if (tmdbId != null) {
+        try {
+          final videos = await repo.get('movie/$tmdbId/videos');
+          final list = videos['results'];
+          if (list is List) {
+            Map? pick;
+            for (final v in list) {
+              if (v is! Map || v['site'] != 'YouTube') continue;
+              if (v['type'] == 'Trailer') {
+                pick = v;
+                break;
+              }
+              pick ??= v;
+            }
+            final key = pick?['key'];
+            if (key is String && key.isNotEmpty) {
+              streams = await youtube(key);
+            }
+          }
+        } catch (_) {}
+        if (streams == null) {
+          try {
+            final ids = await repo.get('movie/$tmdbId/external_ids');
+            final imdb = ids['imdb_id'];
+            if (imdb is String && RegExp(r'^tt\d+$').hasMatch(imdb)) {
+              streams = await ImdbTrailerService.resolveTrailer(imdb);
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
     if (!mounted) return;
     final playUrl = streams?.playUrl;
     if (playUrl == null || playUrl.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Couldn\'t load trailer')));
+      messenger?.hideCurrentSnackBar();
+      messenger?.showSnackBar(
+        const SnackBar(content: Text('No trailer found for this movie')),
+      );
       return;
     }
+    messenger?.hideCurrentSnackBar();
     await VideoPlayerLauncher.push(
       context,
       VideoPlayerLaunchArgs(
@@ -5319,6 +5405,36 @@ class IptvResultsViewState extends State<IptvResultsView>
       ),
       isTrailer: true,
     );
+  }
+
+  /// "4K-NF - The Secret Woman (2026) ᴰᴼᴸᴮʸ" -> "The Secret Woman".
+  static String _trailerSearchTitle(String name) {
+    var s = iptvStripTags(name);
+    s = s.replaceAll(RegExp(r'[\[\(\{][^\]\)\}]{0,40}[\]\)\}]'), ' ');
+    for (var i = 0; i < 2; i++) {
+      final next = s
+          .replaceFirst(
+            RegExp(r'^\s*[\p{L}\p{N}+&.\- ]{1,14}?\s*[:|]\s*', unicode: true),
+            '',
+          )
+          .replaceFirst(
+            RegExp(
+              r'^\s*[\p{L}\p{N}+&]{1,8}(?:-[\p{L}\p{N}+&]{1,8})?\s+[-–—]\s+',
+              unicode: true,
+            ),
+            '',
+          );
+      if (next == s || next.trim().isEmpty) break;
+      s = next;
+    }
+    s = s.replaceAll(
+      RegExp(
+        r'\b(4k|8k|uhd|fhd|hdr10?|dv|2160p|1080p|720p|3840p|raw|multi|dolby|atmos|vision)\b',
+        caseSensitive: false,
+      ),
+      ' ',
+    );
+    return s.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
   // ── Quick hide (hold OK on a channel) ──────────────────────────────────
@@ -6794,7 +6910,42 @@ class IptvResultsViewState extends State<IptvResultsView>
     return _sourceCounts[selected.id];
   }
 
+  /// Movies / Series hero target: the focused or hovered poster.
+  final ValueNotifier<IptvChannel?> _vodHero = ValueNotifier<IptvChannel?>(
+    null,
+  );
+
+  void _onVodFocused(IptvChannel channel) {
+    if (!identical(_vodHero.value, channel)) _vodHero.value = channel;
+  }
+
   Widget _buildSpotlightHero(IptvSpotlightLayoutMode mode) {
+    if (_showsPosterRows) {
+      return ValueListenableBuilder<IptvChannel?>(
+        valueListenable: _vodHero,
+        builder: (context, focused, _) {
+          final list = _filteredChannels;
+          // Before anything is focused (or after the folder changed) show the
+          // first title of the list, never an empty "choose a channel" box.
+          // (No list.contains(): the list can be a lazy DB view of 60k
+          // titles. _applyFilters resets the focused title instead.)
+          final channel = focused ?? (list.isNotEmpty ? list.first : null);
+          final playlist = _selectedPlaylist;
+          return SpotlightVodHero(
+            channel: channel,
+            playlist: playlist,
+            folderLabel:
+                _effectiveCategory ??
+                (_selectedContentType == 'series' ? 'All series' : 'All movies'),
+            playFocusNode: _spotlightPrimaryFocusNode,
+            onPlay: (c) => unawaited(_playChannel(c)),
+            onTrailer: _selectedContentType == 'series'
+                ? null
+                : (c, youtubeId) => unawaited(_playVodTrailer(youtubeId, c)),
+          );
+        },
+      );
+    }
     return _stageHoverGuard(
       ValueListenableBuilder<int>(
         valueListenable: _previewEpoch,
@@ -9004,7 +9155,8 @@ class IptvResultsViewState extends State<IptvResultsView>
                     : channel.contentType == 'series'
                     ? null
                     : () => _openListPicker(channel),
-                onFocused: () => _onChannelFocused(channel),
+                onFocused: () => _onVodFocused(channel),
+                onHover: () => _onVodFocused(channel),
                 onDetached: () => _onRowDetached(channel),
                 progress: _progressByUrl[channel.url],
                 isFavorited: _favoriteUrls.contains(channel.url),

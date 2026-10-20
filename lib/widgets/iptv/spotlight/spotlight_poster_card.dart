@@ -20,6 +20,7 @@ class SpotlightPosterCard extends StatefulWidget {
     required this.onTap,
     this.onHold,
     this.onFocused,
+    this.onHover,
     this.onDetached,
     this.progress,
     this.isFavorited = false,
@@ -30,6 +31,9 @@ class SpotlightPosterCard extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback? onHold;
   final VoidCallback? onFocused;
+
+  /// Mouse resting on the card (desktop): updates the hero like focus does.
+  final VoidCallback? onHover;
   final VoidCallback? onDetached;
 
   /// Watched fraction 0..1, if any.
@@ -93,7 +97,10 @@ class _SpotlightPosterCardState extends State<SpotlightPosterCard> {
       focusNode: widget.focusNode,
       onFocusChange: _onFocusChange,
       onKeyEvent: _onKey,
-      child: GestureDetector(
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => widget.onHover?.call(),
+        child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         onLongPress: widget.onHold,
@@ -193,6 +200,7 @@ class _SpotlightPosterCardState extends State<SpotlightPosterCard> {
             ),
           ],
         ),
+      ),
       ),
     );
   }

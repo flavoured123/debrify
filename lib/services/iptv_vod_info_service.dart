@@ -25,6 +25,13 @@ class IptvVodInfo {
   /// 11-character YouTube video id of the trailer, when the panel has one.
   final String? youtubeId;
 
+  /// TMDB movie id when the panel knows it (trailer fallback).
+  final String? tmdbId;
+
+  /// Backdrop / cover art from the panel, for the modern Movies hero.
+  final String? backdropUrl;
+  final String? coverUrl;
+
   const IptvVodInfo({
     this.plot,
     this.year,
@@ -32,6 +39,9 @@ class IptvVodInfo {
     this.genre,
     this.duration,
     this.youtubeId,
+    this.tmdbId,
+    this.backdropUrl,
+    this.coverUrl,
   });
 
   bool get isEmpty =>
@@ -40,7 +50,10 @@ class IptvVodInfo {
       rating == null &&
       genre == null &&
       duration == null &&
-      youtubeId == null;
+      youtubeId == null &&
+      tmdbId == null &&
+      backdropUrl == null &&
+      coverUrl == null;
 }
 
 class IptvVodInfoService {
@@ -123,12 +136,33 @@ class IptvVodInfoService {
         youtubeId: youtubeIdFrom(
           text(info['youtube_trailer']) ?? text(info['trailer']),
         ),
+        tmdbId: _digits(text(info['tmdb_id']) ?? text(info['tmdb'])),
+        backdropUrl: _firstUrl(info['backdrop_path']) ??
+            _firstUrl(info['backdrop']),
+        coverUrl: _firstUrl(info['cover_big']) ??
+            _firstUrl(info['movie_image']) ??
+            _firstUrl(info['cover']),
       );
       return result.isEmpty ? null : result;
     } catch (e) {
       debugPrint('IptvVodInfoService: get_vod_info failed: $e');
       return null;
     }
+  }
+
+  static String? _digits(String? raw) {
+    if (raw == null) return null;
+    final m = RegExp(r'\d+').firstMatch(raw);
+    return m?.group(0);
+  }
+
+  /// Panels send images as a string or a list of strings.
+  static String? _firstUrl(Object? value) {
+    Object? v = value;
+    if (v is List) v = v.isEmpty ? null : v.first;
+    if (v == null) return null;
+    final s = v.toString().trim();
+    return s.startsWith('http') ? s : null;
   }
 
   /// Accepts a bare id or any common YouTube URL form.

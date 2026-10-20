@@ -73,6 +73,15 @@ env:
     lib/widgets/iptv/iptv_sources_sheet.dart
     lib/screens/collections/collection_editor_screen.dart
     lib/utils/app_storage.dart
+    lib/widgets/iptv/spotlight/spotlight_folder_sidebar.dart
+    lib/widgets/iptv/spotlight/spotlight_poster_card.dart
+    lib/widgets/iptv/spotlight/spotlight_shell.dart
+    lib/widgets/iptv/spotlight/spotlight_view_toggle.dart
+    lib/widgets/iptv/spotlight/spotlight_key_hints.dart
+    lib/widgets/iptv/spotlight/spotlight_vod_hero.dart
+    lib/widgets/iptv/spotlight/spotlight_content_type_control.dart
+    lib/widgets/iptv/iptv_sources_sheet.dart
+    lib/widgets/text_prompt_dialog.dart
 
 jobs:
   android:

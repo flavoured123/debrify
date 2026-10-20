@@ -1076,7 +1076,27 @@ class IptvEpgService {
   /// Pure-M3U channels only ever have the XMLTV index, while Xtream channels
   /// without XMLTV coverage keep using the data table as before.
   Future<List<EpgProgramme>> schedule(String channelUrl) =>
-      _schedule(channelUrl);
+      _schedule(channelUrl).then(withoutOverlaps);
+
+  /// Some guides list the same slot twice (two feeds of one channel merged,
+  /// or a copy shifted by a timezone), which drew programme titles on top of
+  /// each other in the timeline. Keeps a clean, non-overlapping sequence:
+  /// sorted by start, and a programme that starts more than two minutes
+  /// before the previous one ends is dropped.
+  static List<EpgProgramme> withoutOverlaps(List<EpgProgramme> input) {
+    if (input.length < 2) return input;
+    final sorted = [...input]..sort((a, b) => a.start.compareTo(b.start));
+    final out = <EpgProgramme>[];
+    for (final p in sorted) {
+      if (!p.stop.isAfter(p.start)) continue;
+      if (out.isNotEmpty &&
+          p.start.isBefore(out.last.stop.subtract(const Duration(minutes: 2)))) {
+        continue;
+      }
+      out.add(p);
+    }
+    return out;
+  }
 
   Future<List<EpgProgramme>> _schedule(
     String channelUrl, {

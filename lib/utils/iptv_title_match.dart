@@ -33,10 +33,19 @@ class IptvTitleKey {
   /// Same title, and the same year when BOTH names state one ("Dune (1984)"
   /// and "Dune (2021)" are different films).
   bool matches(IptvTitleKey other) {
-    if (key != other.key) return false;
     final a = year;
     final b = other.year;
-    return a == null || b == null || a == b;
+    if (a != null && b != null && a != b) return false;
+    if (key == other.key) return true;
+    // A folder code the prefix rules did not catch ("nf", "top", "amz")
+    // left in front of the title: "nfthesecretwoman" vs "thesecretwoman".
+    // Only for reasonably long titles, and only a short leftover, so
+    // "it" never matches "split".
+    final longer = key.length >= other.key.length ? key : other.key;
+    final shorter = identical(longer, key) ? other.key : key;
+    return shorter.length >= 6 &&
+        longer.length - shorter.length <= 6 &&
+        longer.endsWith(shorter);
   }
 }
 
@@ -46,8 +55,10 @@ final RegExp _kPrefixColon = RegExp(
   r'^\s*[\p{L}\p{N}+&.\- ]{1,14}?\s*[:|]\s*',
   unicode: true,
 );
+// "NF - ", "4K-NF - ", "4K-TOP - ": a short code (optionally two joined by
+// a dash) followed by a spaced dash.
 final RegExp _kPrefixDash = RegExp(
-  r'^\s*[\p{L}\p{N}+&]{1,8}\s+[-–—]\s+',
+  r'^\s*[\p{L}\p{N}+&]{1,8}(?:-[\p{L}\p{N}+&]{1,8})?\s+[-–—]\s+',
   unicode: true,
 );
 final RegExp _kSplit = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
