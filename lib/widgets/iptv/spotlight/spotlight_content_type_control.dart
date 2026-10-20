@@ -18,12 +18,16 @@ class SpotlightContentTypeControl extends StatelessWidget {
   final ValueChanged<String> onChanged;
   final FocusNode? firstItemFocusNode;
 
+  /// When set, a fourth "Sports" segment opens the Sports Hub.
+  final VoidCallback? onOpenSports;
+
   const SpotlightContentTypeControl({
     super.key,
     required this.value,
     this.dense = false,
     required this.onChanged,
     this.firstItemFocusNode,
+    this.onOpenSports,
   }) : assert(
          value == live || value == movies || value == series,
          'Spotlight content type must be live, vod, or series.',
@@ -44,6 +48,23 @@ class SpotlightContentTypeControl extends StatelessWidget {
               _segment(movies, 'Movies', 1),
               const SizedBox(width: 4),
               _segment(series, 'Series', 2),
+              if (onOpenSports != null) ...[
+                const SizedBox(width: 4),
+                Expanded(
+                  child: FocusTraversalOrder(
+                    order: const NumericFocusOrder(3),
+                    child: _ContentTypeSegment(
+                      key: const ValueKey<String>(
+                        'spotlight-content-type-sports',
+                      ),
+                      label: 'Sports',
+                      selected: false,
+                      focusNode: null,
+                      onPressed: onOpenSports!,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

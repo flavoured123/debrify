@@ -69,6 +69,8 @@ import 'spotlight/spotlight_category_control.dart';
 import 'spotlight/spotlight_content_type_control.dart';
 import 'spotlight/spotlight_folder_sidebar.dart';
 import 'spotlight/spotlight_poster_card.dart';
+import 'spotlight/spotlight_view_toggle.dart';
+import 'spotlight/spotlight_key_hints.dart';
 import 'spotlight/spotlight_live_timeline.dart';
 import 'spotlight/spotlight_programme_hero.dart';
 import 'spotlight/spotlight_rail.dart';
@@ -6299,7 +6301,28 @@ class IptvResultsViewState extends State<IptvResultsView>
     BoxConstraints constraints,
     IptvSpotlightLayoutMode mode,
   ) {
+    _ensureLiveListModeLoaded();
     final selected = _selectedPlaylist;
+    final shell = _buildSpotlightShell(mode, selected);
+    if (mode != IptvSpotlightLayoutMode.wide) return shell;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: shell),
+        SpotlightKeyHints(
+          isTelevision: widget.isTelevision,
+          contentType: (selected?.isXtreamCodes ?? false)
+              ? _selectedContentType
+              : 'live',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSpotlightShell(
+    IptvSpotlightLayoutMode mode,
+    IptvPlaylist? selected,
+  ) {
     return SpotlightShell(
       mode: mode,
       searchSlot: _buildSpotlightSearch(mode),
@@ -6337,7 +6360,10 @@ class IptvResultsViewState extends State<IptvResultsView>
             mode == IptvSpotlightLayoutMode.wide && !_spotlightSourcesExpanded,
       ),
       categorySlot: _spotlightControlNavigation(
-        SpotlightCategoryControl(
+        Row(
+          children: [
+            Expanded(
+              child: SpotlightCategoryControl(
           dense: true,
           categoryLabel: _effectiveCategory ?? 'All channels',
           channelCount: _filteredChannels.length,
@@ -6349,6 +6375,16 @@ class IptvResultsViewState extends State<IptvResultsView>
               ? () => unawaited(_promptCategoryOptions(_selectedCategory!))
               : null,
         ),
+            ),
+            if (_spotlightTimelineEligible) ...[
+              const SizedBox(width: 8),
+              SpotlightViewToggle(
+                listMode: _liveListMode,
+                onChanged: (list) => unawaited(_setLiveListMode(list)),
+              ),
+            ],
+          ],
+        ),
       ),
       contentTypeSlot: selected?.isXtreamCodes ?? false
           ? _spotlightControlNavigation(
@@ -6357,6 +6393,7 @@ class IptvResultsViewState extends State<IptvResultsView>
                 value: _selectedContentType,
                 onChanged: _onContentTypeChanged,
                 firstItemFocusNode: _contentTypeFocusNode,
+                onOpenSports: _openSportsHub,
               ),
             )
           : null,
@@ -7317,7 +7354,42 @@ class IptvResultsViewState extends State<IptvResultsView>
     );
   }
 
-  bool get _spotlightUsesTimeline {
+  /// Modern layout: Live TV as a channel LIST (number, logo, name, now/next
+  /// with progress) instead of the timeline guide. Saved per profile; the
+  /// List/Guide pill beside the folder control flips it.
+  bool _liveListMode = true;
+  bool _liveListModeLoaded = false;
+  static const String _kLiveListModePref = 'iptv_modern_live_list';
+
+  void _ensureLiveListModeLoaded() {
+    if (_liveListModeLoaded) return;
+    _liveListModeLoaded = true;
+    unawaited(() async {
+      try {
+        final prefs = await ProfilePreferences.instance();
+        final saved = prefs.getBool(_kLiveListModePref);
+        if (!mounted || saved == null || saved == _liveListMode) return;
+        setState(() => _liveListMode = saved);
+      } catch (_) {}
+    }());
+  }
+
+  Future<void> _setLiveListMode(bool list) async {
+    if (_liveListMode == list) return;
+    setState(() => _liveListMode = list);
+    try {
+      final prefs = await ProfilePreferences.instance();
+      await prefs.setBool(_kLiveListModePref, list);
+    } catch (_) {}
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _categoryFilterFocusNode.requestFocus();
+    });
+  }
+
+  bool get _spotlightUsesTimeline =>
+      _spotlightTimelineEligible && !_liveListMode;
+
+  bool get _spotlightTimelineEligible {
     final selected = _selectedPlaylist;
     if (selected == null) return false;
     // Saved shelves share the guide's row navigation, including its playable
@@ -8667,7 +8739,18 @@ class IptvResultsViewState extends State<IptvResultsView>
     final w = MediaQuery.of(context).size.width;
     final narrowRows = !widget.isTelevision && w < 600;
     final hPadding = tvPane ? 10.0 : (w >= 900 ? 28.0 : 12.0);
-    final maxCrossAxisExtent = tvPane ? 720.0 : 440.0;
+    // Modern layout, Live TV list: one full-width column of guide rows.
+    final modernList =
+        tvPane &&
+        !cockpit &&
+        !touchSelector &&
+        !_showsPosterRows &&
+        _spotlightLayoutMode != IptvSpotlightLayoutMode.classic;
+    final maxCrossAxisExtent = modernList
+        ? 100000.0
+        : tvPane
+        ? 720.0
+        : 440.0;
     const crossAxisSpacing = 12.0;
     final padRight = tvPane ? 24.0 : hPadding;
 
@@ -8682,8 +8765,8 @@ class IptvResultsViewState extends State<IptvResultsView>
     final rowExtent = _showsPosterRows
         ? kIptvPosterRowExtent
         : epgRows
-        ? (cockpit ? kIptvEpgRowTallExtent : kIptvEpgRowExtent)
-        : cockpit
+        ? (cockpit || modernList ? kIptvEpgRowTallExtent : kIptvEpgRowExtent)
+        : cockpit || modernList
         ? kIptvRowTallExtent
         : narrowRows
         ? kIptvNarrowRowExtent
@@ -8797,7 +8880,9 @@ class IptvResultsViewState extends State<IptvResultsView>
                       // Styled looks exist only in the cockpit, and only for
                       // live/EPG rows — VOD/series posters keep the shipped
                       // layout in every style (plan: posters are untouched).
-                      style: cockpit && !_showsPosterRows
+                      style: modernList
+                          ? IptvStyle.spotlight
+                          : cockpit && !_showsPosterRows
                           ? _iptvStyle
                           : IptvStyle.command,
                       tileWidth:

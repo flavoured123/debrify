@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// A single-field prompt (a URL, a pasted document) that pops the trimmed
 /// text on confirm and null on cancel. Empty input never confirms.
@@ -43,6 +44,28 @@ class _TextPromptDialogState extends State<TextPromptDialog> {
     Navigator.of(context).pop(text);
   }
 
+  String? _clipboardNote;
+
+  /// Imports straight from the clipboard without ever putting the text into
+  /// the field. A big collections file pasted into a multiline TextField
+  /// has to be laid out in full on the UI thread, which froze the desktop
+  /// app ("Not Responding") for minutes.
+  Future<void> _importClipboard() async {
+    ClipboardData? data;
+    try {
+      data = await Clipboard.getData(Clipboard.kTextPlain);
+    } catch (_) {
+      data = null;
+    }
+    if (!mounted) return;
+    final text = data?.text?.trim() ?? '';
+    if (text.isEmpty) {
+      setState(() => _clipboardNote = 'The clipboard is empty.');
+      return;
+    }
+    Navigator.of(context).pop(text);
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -56,7 +79,9 @@ class _TextPromptDialogState extends State<TextPromptDialog> {
           children: [
             TextField(
               controller: _controller,
-              autofocus: true,
+              // Multiline (pasted documents): the clipboard button is the
+              // primary path, so the field must not grab focus/keyboard.
+              autofocus: !widget.multiline,
               keyboardType: widget.multiline
                   ? TextInputType.multiline
                   : (widget.keyboardType ?? TextInputType.text),
@@ -73,6 +98,22 @@ class _TextPromptDialogState extends State<TextPromptDialog> {
             ),
             const SizedBox(height: 8),
             Text(widget.helper, style: const TextStyle(fontSize: 12)),
+            if (widget.multiline) ...[
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: _importClipboard,
+                icon: const Icon(Icons.content_paste_rounded),
+                label: const Text('Use clipboard directly (best for big files)'),
+              ),
+              if (_clipboardNote != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _clipboardNote!,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+            ],
           ],
         ),
       ),
