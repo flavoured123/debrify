@@ -138,7 +138,8 @@ class _SpotlightVodHeroState extends State<SpotlightVodHero> {
 
     final meta = <String>[
       if (year != null) year,
-      if (duration != null && duration != '00:00:00') duration,
+      if (duration != null && iptvNiceDuration(duration).isNotEmpty)
+        iptvNiceDuration(duration),
       if (genre != null) genre,
     ];
 
