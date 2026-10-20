@@ -135,6 +135,7 @@ import '../widgets/tv_text_field.dart';
 import '../widgets/text_field_suggestions.dart';
 import '../widgets/metadata_title_navigation.dart';
 import '../services/tmdb_title_search.dart';
+import '../services/tmdb_metadata_repository.dart';
 import '../services/metadata_title_service.dart';
 import 'collections/collection_folder_screen.dart';
 import 'iptv/xtream_series_detail.dart';
@@ -6312,6 +6313,12 @@ class _SearchScreenState extends State<SearchScreen>
     // then STREAM into the fresh board as they arrive; on TV the board stays on
     // its spinner until every catalog is in and lands in one shot (see below).
     _applySections(const []);
+    // TMDB results first (Movies / Series rows): finds titles even when no
+    // installed addon's catalog knows them ("Ali Baba", regional titles).
+    final tmdbSections = await _tmdbSearchSections(query);
+    if (!mounted || token != _catalogSearchToken) return;
+    final tmdbShown = tmdbSections.isNotEmpty && !widget.isTelevision;
+    if (tmdbShown) _applySections(tmdbSections);
     try {
       // Honour the per-addon toggles from the catalog Sources dialog: skip
       // addons the user disabled for catalog search (empty set = all queried).
@@ -6340,7 +6347,7 @@ class _SearchScreenState extends State<SearchScreen>
       // otherwise fire hundreds of concurrent HTTP requests at once and exhaust
       // sockets/memory on weak hardware.
       final tv = widget.isTelevision;
-      var appliedFirst = false;
+      var appliedFirst = tmdbShown;
       final raw = await mapWithConcurrency(catalogTasks, (entry) async {
         List<StremioMeta> items;
         var rawCount = 0;
@@ -6395,7 +6402,10 @@ class _SearchScreenState extends State<SearchScreen>
       // TV: apply the whole result set at once (mapWithConcurrency preserves
       // input order, so rows land in addon order, not completion order).
       if (tv) {
-        _applySections(raw.whereType<CatalogSection>().toList());
+        _applySections([
+          ...tmdbSections,
+          ...raw.whereType<CatalogSection>(),
+        ]);
       }
       setState(() => _catalogSearching = false);
       if (tv && _rowNodes.isNotEmpty && _rowNodes.first.isNotEmpty) {
@@ -6408,6 +6418,77 @@ class _SearchScreenState extends State<SearchScreen>
       _searchSubmitFocus.cancel();
       setState(() => _catalogSearching = false);
     }
+  }
+
+  /// TMDB title search as board rows, each title mapped to its IMDb id so it
+  /// opens and plays exactly like an addon catalog result. Empty when TMDB is
+  /// not configured or the lookup fails (addon results still show).
+  Future<List<CatalogSection>> _tmdbSearchSections(String query) async {
+    final repo = TmdbMetadataRepository.instance;
+    final q = query.trim();
+    if (!repo.configured || !TmdbTitleSearch.accepts(q)) return const [];
+    List<StremioMeta> found;
+    try {
+      final data = await repo.get('search/multi', {
+        'query': q,
+        'language': _metadataFeaturePolicy?.language ?? 'en-US',
+        'include_adult': 'false',
+        'page': '1',
+      });
+      found = TmdbTitleSearch.parse(data, limit: 20);
+    } catch (_) {
+      return const [];
+    }
+    if (found.isEmpty) return const [];
+
+    Future<StremioMeta?> resolveOne(StremioMeta m) async {
+      try {
+        final r = await MetadataTitleService.instance.resolve(m);
+        return r.id.startsWith('tt') ? r : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final resolved = await Future.wait(found.map(resolveOne));
+    final movies = <StremioMeta>[];
+    final series = <StremioMeta>[];
+    for (final m in resolved) {
+      if (m == null) continue;
+      (m.type == 'series' ? series : movies).add(m);
+    }
+    final addon = StremioAddon(
+      id: 'metadata_title',
+      name: 'TMDB',
+      manifestUrl: '',
+      baseUrl: '',
+    );
+    return [
+      if (movies.isNotEmpty)
+        CatalogSection(
+          title: 'TMDB Movies',
+          addon: addon,
+          catalog: const StremioAddonCatalog(
+            id: 'tmdb_search_movie',
+            type: 'movie',
+            name: 'TMDB Movies',
+          ),
+          items: movies,
+          exhausted: true,
+        ),
+      if (series.isNotEmpty)
+        CatalogSection(
+          title: 'TMDB Series',
+          addon: addon,
+          catalog: const StremioAddonCatalog(
+            id: 'tmdb_search_series',
+            type: 'series',
+            name: 'TMDB Series',
+          ),
+          items: series,
+          exhausted: true,
+        ),
+    ];
   }
 
   /// Cancel any pending search and return to the homepage board.

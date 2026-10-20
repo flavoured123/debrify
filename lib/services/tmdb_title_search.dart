@@ -70,7 +70,10 @@ class TmdbTitleSearch extends ValueNotifier<List<StremioMeta>> {
     });
   }
 
-  static List<StremioMeta> parse(Map<String, dynamic> data) {
+  static List<StremioMeta> parse(
+    Map<String, dynamic> data, {
+    int limit = 6,
+  }) {
     final results = data['results'];
     if (results is! List) return const [];
     final seen = <String>{};
@@ -110,7 +113,7 @@ class TmdbTitleSearch extends ValueNotifier<List<StremioMeta>> {
               : null,
         ),
       );
-      if (items.length == 6) break;
+      if (items.length >= limit) break;
     }
     return List.unmodifiable(items);
   }
