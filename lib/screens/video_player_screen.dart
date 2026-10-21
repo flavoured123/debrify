@@ -4733,15 +4733,24 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     required bool liveStream,
     required int generation,
   }) async {
-    final want = liveStream ? const <String, String>{} : tuning.mpvProperties;
-    // Standard (and live-before-any-tuning): nothing was ever applied,
-    // nothing to restore — the player is untouched.
+    final want =
+        liveStream ? tuning.liveMpvProperties : tuning.mpvProperties;
+    // Standard (and nothing tuned yet): nothing was ever applied, nothing to
+    // restore — the player is untouched.
     if (want.isEmpty && _networkTuningDefaults == null) return;
     if (generation != _decoderProbeGeneration) return; // superseded in queue
     try {
-      if (want.isNotEmpty && _networkTuningDefaults == null) {
-        final defaults = <String, String>{};
-        for (final key in want.keys) {
+      // Capture stock values for every key this open wants that hasn't been
+      // captured yet. Live and VOD tune DIFFERENT keys, so the capture is
+      // incremental: a live open first, then a VOD open (or the reverse) on
+      // the same player still records each key's stock value before its
+      // first override, and each open restores the other side's keys.
+      final missing = want.keys
+          .where((k) => !(_networkTuningDefaults?.containsKey(k) ?? false))
+          .toList();
+      if (missing.isNotEmpty) {
+        final defaults = <String, String>{...?_networkTuningDefaults};
+        for (final key in missing) {
           final value = await platform.getProperty(key);
           // The vendored getProperty returns '' instead of throwing when mpv
           // has no value. An empty "default" would silently fail to restore
@@ -4821,6 +4830,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         tuning = _networkTuning = const NetworkTuning(
           patience: NetworkTuning.standard,
           buffer: NetworkTuning.standard,
+          iptvBuffer: NetworkTuning.standard,
         );
       }
       try {

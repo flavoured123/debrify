@@ -1946,6 +1946,9 @@ class AndroidTvPlayerBridge {
         if (iptvDecoder != 'auto') {
           payloadWithFont['iptvDecoder'] = iptvDecoder;
         }
+        // Live IPTV buffer cushion (always sent; the activity only applies
+        // it in IPTV mode and treats 'standard' as stock).
+        payloadWithFont['iptvBuffer'] = await StorageService.getIptvLiveBuffer();
       } catch (e) {
         debugPrint('AndroidTvPlayerBridge: network tuning read failed: $e');
       }

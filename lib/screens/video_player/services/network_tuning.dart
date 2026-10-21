@@ -26,7 +26,11 @@ import '../../../services/storage_service.dart';
 /// "where the player supports them" hedge covers it; plumb it only if a
 /// Magic TV user actually reports slow-origin timeouts.
 class NetworkTuning {
-  const NetworkTuning({required this.patience, required this.buffer});
+  const NetworkTuning({
+    required this.patience,
+    required this.buffer,
+    this.iptvBuffer = standard,
+  });
 
   /// How long the player tolerates a slow/dropped connection, and whether it
   /// retries at the protocol layer.
@@ -34,6 +38,16 @@ class NetworkTuning {
 
   /// How much video the demuxer reads ahead.
   final String buffer;
+
+  /// Live IPTV cushion preset ('standard' | 'large' | 'huge'). Applies only
+  /// to live opens; see [liveMpvProperties].
+  final String iptvBuffer;
+
+  static const Map<String, String> iptvBufferOptions = {
+    'standard': 'Standard (fastest channel switch)',
+    'large': 'Large (~4s cushion)',
+    'huge': 'Huge (~8s cushion)',
+  };
 
   static const String standard = 'standard';
 
@@ -59,6 +73,7 @@ class NetworkTuning {
   static Future<NetworkTuning> load() async => NetworkTuning(
         patience: await StorageService.getNetworkConnectPatience(),
         buffer: await StorageService.getNetworkBufferSize(),
+        iptvBuffer: await StorageService.getIptvLiveBuffer(),
       );
 
   /// mpv properties for a (non-live) open. Empty at Standard — the caller
@@ -86,6 +101,24 @@ class NetworkTuning {
         break;
     }
     return props;
+  }
+
+  /// mpv properties for a LIVE open. A live stream arrives at roughly real
+  /// time, so read-ahead can't grow far past the live edge — what actually
+  /// rides over a server/Wi-Fi hiccup is the cushion the player builds
+  /// BEFORE it starts (and before it resumes after an underrun). mpv's
+  /// cache-pause-wait is that threshold (stock 1s); cache-pause-initial makes
+  /// the first start honour it too. Values stay well under the native
+  /// player's 12s stall watchdog equivalent so a refill never reads as dead.
+  Map<String, String> get liveMpvProperties {
+    switch (iptvBuffer) {
+      case 'large':
+        return const {'cache-pause-wait': '4', 'cache-pause-initial': 'yes'};
+      case 'huge':
+        return const {'cache-pause-wait': '8', 'cache-pause-initial': 'yes'};
+      default:
+        return const {};
+    }
   }
 
   /// ffmpeg protocol-layer retry for VOD opens, rider on the same

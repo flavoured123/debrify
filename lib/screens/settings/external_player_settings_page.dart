@@ -126,6 +126,7 @@ class _ExternalPlayerSettingsPageState
   String _skipSegmentProvider = SkipSegmentProviders.auto;
   String _netPatience = NetworkTuning.standard;
   String _netBuffer = NetworkTuning.standard;
+  String _iptvLiveBuffer = StorageService.defaultIptvLiveBuffer;
   String?
   _defaultSubtitleLanguage; // null = no preference, 'off' = disabled, 'en'/'es'/etc = language
   String?
@@ -172,6 +173,7 @@ class _ExternalPlayerSettingsPageState
   final FocusNode _subtitleBoldFocusNode = FocusNode();
   final FocusNode _netPatienceFocusNode = FocusNode();
   final FocusNode _netBufferFocusNode = FocusNode();
+  final FocusNode _iptvLiveBufferFocusNode = FocusNode();
   bool _aspectFocused = false;
   bool _defaultAudioLangFocused = false;
   bool _defaultSubtitleLangFocused = false;
@@ -201,6 +203,7 @@ class _ExternalPlayerSettingsPageState
   bool _subtitleBoldFocused = false;
   bool _netPatienceFocused = false;
   bool _netBufferFocused = false;
+  bool _iptvLiveBufferFocused = false;
 
   // DeoVR FocusNodes for DPAD navigation
   final FocusNode _screenTypeFocusNode = FocusNode();
@@ -438,6 +441,12 @@ class _ExternalPlayerSettingsPageState
         _netBufferFocused = _netBufferFocusNode.hasFocus;
       });
     });
+    _iptvLiveBufferFocusNode.addListener(() {
+      if (!mounted) return;
+      setState(() {
+        _iptvLiveBufferFocused = _iptvLiveBufferFocusNode.hasFocus;
+      });
+    });
   }
 
   @override
@@ -485,6 +494,7 @@ class _ExternalPlayerSettingsPageState
     _subtitleBoldFocusNode.dispose();
     _netPatienceFocusNode.dispose();
     _netBufferFocusNode.dispose();
+    _iptvLiveBufferFocusNode.dispose();
     super.dispose();
   }
 
@@ -637,6 +647,7 @@ class _ExternalPlayerSettingsPageState
       final netPatience = await StorageService.getNetworkConnectPatience();
       final iptvDecoderMode = await StorageService.getIptvDecoderMode();
       final netBuffer = await StorageService.getNetworkBufferSize();
+      final iptvLiveBuffer = await StorageService.getIptvLiveBuffer();
 
       // Load subtitle settings
       final subtitleSettings = await SubtitleSettingsService.instance.loadAll();
@@ -700,6 +711,10 @@ class _ExternalPlayerSettingsPageState
         _netBuffer = NetworkTuning.bufferOptions.containsKey(netBuffer)
             ? netBuffer
             : NetworkTuning.standard;
+        _iptvLiveBuffer =
+            NetworkTuning.iptvBufferOptions.containsKey(iptvLiveBuffer)
+            ? iptvLiveBuffer
+            : StorageService.defaultIptvLiveBuffer;
         _defaultSubtitleLanguage = defaultSubtitleLanguage;
         _defaultAudioLanguage = defaultAudioLanguage;
         _subtitleSizeIndex = subtitleSettings.sizeIndex;
@@ -1260,6 +1275,11 @@ class _ExternalPlayerSettingsPageState
   Future<void> _setNetBuffer(String value) async {
     setState(() => _netBuffer = value);
     await StorageService.setNetworkBufferSize(value);
+  }
+
+  Future<void> _setIptvLiveBuffer(String value) async {
+    setState(() => _iptvLiveBuffer = value);
+    await StorageService.setIptvLiveBuffer(value);
   }
 
   Future<void> _setDefaultSubtitleLanguage(String? languageCode) async {
@@ -2500,13 +2520,26 @@ class _ExternalPlayerSettingsPageState
                   focusNode: _netBufferFocusNode,
                   isFocused: _netBufferFocused,
                 ),
+                const SizedBox(height: 12),
+                _buildDropdownSetting(
+                  context,
+                  label: 'Live IPTV buffer',
+                  value: _iptvLiveBuffer,
+                  items: NetworkTuning.iptvBufferOptions,
+                  onChanged: _setIptvLiveBuffer,
+                  focusNode: _iptvLiveBufferFocusNode,
+                  isFocused: _iptvLiveBufferFocused,
+                ),
                 const SizedBox(height: 10),
                 Text(
                   'Patience raises connection timeouts and adds '
                   'automatic retries where the player supports '
                   'them. Bigger buffers ride over origin stalls '
-                  'but use more memory. Live TV keeps its own '
-                  'tuned pipeline. Restart playback to apply.',
+                  'but use more memory. Live IPTV buffer holds a '
+                  'few extra seconds before playing, so short '
+                  'network hiccups don\'t freeze the channel — '
+                  'channel switching gets a little slower. '
+                  'Restart playback to apply.',
                   style: theme.textTheme.bodySmall?.copyWith(color: t.dim2),
                 ),
               ],

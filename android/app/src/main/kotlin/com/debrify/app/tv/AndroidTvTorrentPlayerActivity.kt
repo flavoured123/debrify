@@ -1153,6 +1153,8 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
     // untouched — the invariant that keeps this feature regression-free.
     private var networkPatience = "standard"
     private var networkBuffer = "standard"
+    /** Live IPTV cushion preset: 'standard' | 'large' | 'huge' (IPTV mode only). */
+    private var iptvLiveBuffer = "standard"
     /** 'auto' | 'hardware' | 'software' — see StorageService.iptvDecoderModes.
      *  Only ever non-auto when the user picked a decoder in Playback settings
      *  (a frozen picture with running audio is a box decoder defect). */
@@ -3017,6 +3019,32 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
                     .setPrioritizeTimeOverSizeThresholds(true)
                     .build()
             )
+        } else if (isIptvMode && iptvLiveBuffer != "standard") {
+            // Live IPTV cushion. A live stream arrives at ~real time, so the
+            // buffer can't run far ahead of the live edge; what rides over a
+            // server or Wi-Fi hiccup is how much the player holds BEFORE it
+            // starts and before it resumes after a rebuffer (stock 1s / 2s in
+            // media3 1.8). Raise exactly those two; min/max stay stock (50s)
+            // and no byte target is set, so memory use is unchanged.
+            // Bounds: the rebuffer threshold stays under IptvLiveRecovery's
+            // 12s STALL_WINDOW (a refill at 1x speed must never read as a
+            // dead stream and trigger a re-tune), and the start threshold
+            // stays far under its 20s TUNE_WATCHDOG. HLS channels are safe
+            // too: DefaultLoadControl caps the start threshold at half the
+            // target live offset, so it can never wait for segments that
+            // don't exist yet.
+            val huge = iptvLiveBuffer == "huge"
+            playerBuilder.setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+                        DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
+                        if (huge) 8_000 else 4_000, // bufferForPlaybackMs
+                        if (huge) 7_000 else 5_000, // bufferForPlaybackAfterRebufferMs
+                    )
+                    .build()
+            )
+            android.util.Log.d("AndroidTvPlayer", "IPTV live buffer preset: $iptvLiveBuffer")
         } else if (!isIptvMode && networkBuffer != "standard") {
             // Stream buffer preset: wider read-ahead rides over origin
             // stalls. Start thresholds stay stock (only min/max grow), so
@@ -8825,6 +8853,7 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
         // IPTV mode returns before parsePayload, so the decoder preference is
         // read here too — this is the ONLY path where it has any effect.
         iptvDecoderMode = json.optString("iptvDecoder", "auto")
+        iptvLiveBuffer = json.optString("iptvBuffer", "standard")
 
         iptvSourceId = json.optString("sourceId").takeIf { it.isNotEmpty() }
         iptvSourceName = json.optString("sourceName").takeIf { it.isNotEmpty() } ?: "IPTV"

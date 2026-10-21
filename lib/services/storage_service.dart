@@ -368,6 +368,7 @@ class StorageService {
   static const String _networkConnectPatienceKey = 'network_connect_patience';
   static const String _iptvDecoderModeKey = 'iptv_decoder_mode';
   static const String _networkBufferSizeKey = 'network_buffer_size';
+  static const String _iptvLiveBufferKey = 'iptv_live_buffer';
   static const String _contentDisplayMatchModeKey =
       'content_display_match_mode';
   static const String _updateAutoCheckEnabledKey = 'update_auto_check_enabled';
@@ -7237,6 +7238,28 @@ class StorageService {
   static Future<void> setNetworkBufferSize(String value) async {
     final prefs = await ProfilePreferences.instance();
     await prefs.setString(_networkBufferSizeKey, value);
+  }
+
+  /// Live IPTV buffer cushion: 'standard' | 'large' | 'huge'.
+  /// Standard = stock player start thresholds (fastest zaps). Large/Huge make
+  /// the player hold a few more seconds before starting and before resuming
+  /// after a network hiccup, so short server/Wi-Fi stalls play through
+  /// instead of freezing. Defaults to Large in this personal build.
+  static const List<String> iptvLiveBufferModes = ['standard', 'large', 'huge'];
+  static const String defaultIptvLiveBuffer = 'large';
+
+  static Future<String> getIptvLiveBuffer() async {
+    final prefs = await ProfilePreferences.instance();
+    final value = prefs.getString(_iptvLiveBufferKey) ?? defaultIptvLiveBuffer;
+    return iptvLiveBufferModes.contains(value) ? value : defaultIptvLiveBuffer;
+  }
+
+  static Future<void> setIptvLiveBuffer(String value) async {
+    final prefs = await ProfilePreferences.instance();
+    await prefs.setString(
+      _iptvLiveBufferKey,
+      iptvLiveBufferModes.contains(value) ? value : defaultIptvLiveBuffer,
+    );
   }
 
   /// Television output matching. The default deliberately preserves the
