@@ -1,3 +1,6 @@
+import 'dart:async';
+import '../../services/trailer_timing.dart';
+import '../home/spotlight_card_trailer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -143,6 +146,13 @@ class SeeAllPosterGrid extends StatefulWidget {
   /// stacked-rails screen). Null keeps the shelf's default of swallowing it.
   final VoidCallback? onExitBottom;
 
+  /// Plays the focused / hovered card's trailer inside it after the card
+  /// dwell (Settings: Instant Trailers), as the Spotlight rows do.
+  final bool previewTrailers;
+
+  /// Trailer volume, 0–100.
+  final double trailerVolume;
+
   const SeeAllPosterGrid({
     super.key,
     required this.items,
@@ -160,6 +170,8 @@ class SeeAllPosterGrid extends StatefulWidget {
     this.onExitTop,
     this.onExitLeft,
     this.onExitBottom,
+    this.previewTrailers = false,
+    this.trailerVolume = 100,
   });
 
   @override
@@ -229,8 +241,67 @@ class SeeAllPosterGridState extends State<SeeAllPosterGrid> {
     }
   }
 
+  // ── Card trailer preview ──────────────────────────────────────────────
+  Timer? _previewDwell;
+  String? _previewKey;   // the card whose trailer is mounted
+  String? _armedKey;     // the card the dwell is waiting on
+
+  String _keyOf(StremioMeta item) => '${item.type}:${item.id}';
+
+  void _armPreview(StremioMeta item) {
+    if (!widget.previewTrailers || item.type == 'folder') return;
+    final key = _keyOf(item);
+    if (key == _armedKey || key == _previewKey) return;
+    _armedKey = key;
+    _previewDwell?.cancel();
+    if (_previewKey != null) setState(() => _previewKey = null);
+    _previewDwell = Timer(TrailerTiming.cardDwell, () {
+      if (!mounted || _armedKey != key) return;
+      if (ModalRoute.of(context)?.isCurrent == false) return;
+      setState(() => _previewKey = key);
+    });
+  }
+
+  void _disarmPreview(StremioMeta item) {
+    final key = _keyOf(item);
+    if (_armedKey != key && _previewKey != key) return;
+    _previewDwell?.cancel();
+    _armedKey = null;
+    if (_previewKey != null) setState(() => _previewKey = null);
+  }
+
+  Widget _withPreview(StremioMeta item, Widget tile) {
+    if (!widget.previewTrailers) return tile;
+    final playing = _previewKey == _keyOf(item);
+    return MouseRegion(
+      onEnter: (_) => _armPreview(item),
+      onExit: (_) => _disarmPreview(item),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          tile,
+          if (playing)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SpotlightCardTrailer(
+                    key: ValueKey('grid-trailer:${_keyOf(item)}'),
+                    item: item,
+                    volume: widget.trailerVolume,
+                    onPlayingChanged: (_) {},
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    _previewDwell?.cancel();
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
     _focusIndex.dispose();
@@ -589,7 +660,7 @@ class SeeAllPosterGridState extends State<SeeAllPosterGrid> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Expanded(
-                      child: CatalogItemTile(
+                      child: _withPreview(item, CatalogItemTile(
                         item: item,
                         isTelevision: widget.isTelevision,
                         focusNode: index < _nodes.length ? _nodes[index] : null,
@@ -598,15 +669,16 @@ class SeeAllPosterGridState extends State<SeeAllPosterGrid> {
                         onLongPress: widget.onQuickPlay == null
                             ? null
                             : () => widget.onQuickPlay!(item),
-                        onFocused: widget.onItemFocused == null
-                            ? null
-                            : () => widget.onItemFocused!(item),
+                        onFocused: () {
+                          _armPreview(item);
+                          widget.onItemFocused?.call(item);
+                        },
                         progress: widget.progressOf?.call(item),
                         showInlineTitle: false,
                         showTypeBadge: showTypeBadge,
                         showRatingBadge: showRatingBadge,
                         compactBadgeLayout: m.childWidth < 142,
-                      ),
+                      )),
                     ),
                     if (showTitles) ...[
                       const SizedBox(height: titleGap),

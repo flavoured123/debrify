@@ -11,11 +11,11 @@ class TrailerTiming {
 
   static const String _key = 'trailer_instant_start';
   static const String _reduceMotionKey = 'trailer_respect_reduce_motion';
-  static bool _instant = false;
+  static bool _instant = true;
   static bool _respectReduceMotion = false;
 
   /// How long the Home hero waits on a title before its trailer starts.
-  static const Duration heroDelay = Duration(seconds: 2);
+  static const Duration heroDelay = Duration(milliseconds: 300);
 
   /// Whether trailers stay still when the OS asks for reduced motion
   /// (Windows "Animation effects" off, Android "Remove animations"). Off by
@@ -38,7 +38,7 @@ class TrailerTiming {
   static Duration get cardDwell {
     _ensureLoaded();
     return _instant
-        ? const Duration(milliseconds: 450)
+        ? const Duration(milliseconds: 250)
         : const Duration(seconds: 2);
   }
 
@@ -52,7 +52,7 @@ class TrailerTiming {
     _loaded = true;
     try {
       final prefs = await ProfilePreferences.instance();
-      _instant = prefs.getBool(_key) ?? false;
+      _instant = prefs.getBool(_key) ?? true;
       _respectReduceMotion = prefs.getBool(_reduceMotionKey) ?? false;
     } catch (_) {}
     return _instant;

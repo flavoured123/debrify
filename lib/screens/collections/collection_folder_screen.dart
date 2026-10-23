@@ -1466,6 +1466,8 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
       );
     }
     return SeeAllPosterGrid(
+      previewTrailers: _spotlightTrailers,
+      trailerVolume: _spotlightVolume,
       // Keyed per list so switching tabs remounts the grid (fresh scroll and
       // focus memory) instead of morphing one list into another.
       key: _tabGridKey,
@@ -1510,6 +1512,8 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
       );
     }
     return SeeAllPosterGrid(
+      previewTrailers: _spotlightTrailers,
+      trailerVolume: _spotlightVolume,
       key: _allGridKey,
       items: _sorted(items),
       isTelevision: widget.isTelevision,

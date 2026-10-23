@@ -406,6 +406,21 @@ class YoutubeService {
   /// don't pay for an extra network round-trip; only the full playback path
   /// opts in. Keyed separately in the cache so a caption-less ambient resolve
   /// can't satisfy a later playback resolve of the same video (and vice versa).
+  /// [resolveStreams] for ambient trailers: gives YouTube [within] to answer,
+  /// then returns null so the caller falls back to IMDb's MP4 instead of
+  /// leaving a spinner. The resolve keeps running and fills the cache, so the
+  /// next visit to the same title plays from YouTube at once.
+  static Future<YoutubeResolvedStreams?> resolveStreamsQuick(
+    String videoId, {
+    int? maxHeightOverride,
+    bool preferVp9 = false,
+    Duration within = const Duration(seconds: 4),
+  }) => resolveStreams(
+    videoId,
+    maxHeightOverride: maxHeightOverride,
+    preferVp9: preferVp9,
+  ).timeout(within, onTimeout: () => null);
+
   static Future<YoutubeResolvedStreams?> resolveStreams(
     String videoId, {
     int? maxHeightOverride,

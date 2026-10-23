@@ -1249,7 +1249,7 @@ class _MergedDetailScreenState extends State<MergedDetailScreen>
       if (!willAutoplay) return;
       YoutubeResolvedStreams? streams;
       try {
-        streams = await YoutubeService.resolveStreams(ytId);
+        streams = await YoutubeService.resolveStreamsQuick(ytId);
       } catch (_) {
         streams = null;
       }

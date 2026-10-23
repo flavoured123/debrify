@@ -11667,7 +11667,7 @@ class _SearchScreenState extends State<SearchScreen>
         if (!current()) return;
         // Ambient hero backdrop: resolve at a low cap (small region, weak TV).
         var streams = (ytId != null && ytId.isNotEmpty)
-            ? await YoutubeService.resolveStreams(
+            ? await YoutubeService.resolveStreamsQuick(
                 ytId,
                 maxHeightOverride: YoutubeService.ambientTrailerMaxHeight,
                 preferVp9: true,

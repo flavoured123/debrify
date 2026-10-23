@@ -73,7 +73,7 @@ class _SpotlightCardTrailerState extends State<SpotlightCardTrailer> {
       final youtubeId = candidates.firstOrNull?.key;
       var streams = youtubeId == null
           ? null
-          : await YoutubeService.resolveStreams(
+          : await YoutubeService.resolveStreamsQuick(
               youtubeId,
               maxHeightOverride: 480,
               preferVp9: false,
