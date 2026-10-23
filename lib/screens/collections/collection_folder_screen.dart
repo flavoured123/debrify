@@ -1,3 +1,4 @@
+import '../../models/poster_override.dart';
 import '../../widgets/home/snowy_mountain_background.dart';
 import '../../widgets/home/midnight_rain_background.dart';
 import '../../widgets/home/moonlit_ocean_background.dart';
@@ -223,6 +224,8 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
 
   /// One list's own grid: the styled title wall, except for a list opened
   /// from a Spotlight row's arrow, which gets the plain full poster grid.
+  bool get _ratingPosters => PosterOverride.pattern.isNotEmpty;
+
   bool get _styledTab =>
       _styledCollectionList && !(_spotlight && widget.sourceKey != null);
 
@@ -1586,9 +1589,13 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
           SpotlightCard(
             metadata: item,
             title: item.name,
-            image: item.background ?? item.poster,
-            fallbackImage: item.poster,
-            shape: SpotlightCardShape.wide,
+            // With custom rating posters set, rows show those portrait posters
+            // (as Nuvio does) instead of the landscape backdrops.
+            image: _ratingPosters ? item.poster : item.background ?? item.poster,
+            fallbackImage: _ratingPosters ? item.background : item.poster,
+            shape: _ratingPosters
+                ? SpotlightCardShape.poster
+                : SpotlightCardShape.wide,
             rating: item.imdbRating,
             subtitle: item.year,
             watchedImdbId: item.effectiveImdbId,

@@ -40,8 +40,17 @@ class PosterOverride {
     return _pattern;
   }
 
+  /// "{{imdb_id}}" and "%7Bimdb_id%7D" (a pasted, URL-encoded link) read as {imdb_id}.
+  static String normalize(String value) => value
+      .trim()
+      .replaceAllMapped(RegExp(r'\{\{([a-z_]+)\}\}'), (m) => '{${m[1]}}')
+      .replaceAllMapped(
+        RegExp(r'%7B([a-z_]+)%7D', caseSensitive: false),
+        (m) => '{${m[1]}}',
+      );
+
   static Future<void> setPattern(String value) async {
-    _pattern = value.trim();
+    _pattern = normalize(value);
     _loaded = true;
     revision++;
     try {
@@ -52,7 +61,7 @@ class PosterOverride {
 
   /// Whether [value] is a usable pattern (http(s) with at least one id).
   static bool isValid(String value) {
-    final v = value.trim();
+    final v = normalize(value);
     if (v.isEmpty) return true;
     final uri = Uri.tryParse(v.replaceAll(RegExp(r'\{[a-z_]+\}'), 'x'));
     return uri != null &&
