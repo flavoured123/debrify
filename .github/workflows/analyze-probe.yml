@@ -1,0 +1,22 @@
+name: Analyze probe (temporary)
+on:
+  push:
+    branches: [analyze]
+permissions:
+  contents: write
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.8'
+          channel: stable
+          cache: true
+      - run: flutter pub get > /dev/null
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/services/iptv_sports/sports_match.dart lib/screens/iptv/sports_hub_screen.dart lib/services/deep_link_service.dart lib/main.dart > out.txt 2>&1 || true
+      - run: |
+          mkdir pub && mv out.txt pub/ && cd pub && git init -q && git config user.name p && git config user.email p@users.noreply.github.com
+          git checkout -q -b analyze-out && git add -A && git commit -qm out
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" analyze-out
