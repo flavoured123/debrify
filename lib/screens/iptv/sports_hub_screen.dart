@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import '../../models/iptv_playlist.dart';
 import '../../models/playlist_view_mode.dart';
 import '../../services/iptv_sports/sports_catalog.dart';
+import '../../services/iptv_sports/sports_match.dart';
 import '../../services/iptv_sports/sports_service.dart';
 import '../../services/video_player_launcher.dart';
 import '../../widgets/iptv/styles/iptv_style.dart';
@@ -1764,6 +1765,314 @@ class _SettingsSheetState extends State<_SettingsSheet> {
           const SizedBox(height: 24),
         ],
       ),
+    );
+  }
+}
+
+// ── Find one match (opened by a debrify://sports link) ──────────────────────
+
+/// The channels showing one match — the ones whose guide or name names it,
+/// best stream first — then the other channels of that league or sport.
+/// OK plays; holding OK lists every stream of that channel.
+class SportsMatchScreen extends StatefulWidget {
+  final List<IptvPlaylist> playlists;
+  final SportsMatchRequest request;
+
+  const SportsMatchScreen({
+    super.key,
+    required this.playlists,
+    required this.request,
+  });
+
+  @override
+  State<SportsMatchScreen> createState() => _SportsMatchScreenState();
+}
+
+class _SportsMatchScreenState extends State<SportsMatchScreen> {
+  SportsMatchResult? _result;
+  bool _searching = true;
+  bool _alive = true;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_find());
+  }
+
+  @override
+  void dispose() {
+    _alive = false;
+    super.dispose();
+  }
+
+  Future<void> _find() async {
+    setState(() => _searching = true);
+    final sources = SportsSource.fromPlaylists(widget.playlists);
+    SportsMatchResult result;
+    try {
+      result = await SportsMatchFinder.find(
+        sources: sources,
+        request: widget.request,
+        cancelled: () => !_alive,
+      );
+    } catch (e) {
+      debugPrint('[SportsMatch] search failed: $e');
+      result = const SportsMatchResult(
+        match: <SportsMatchOption>[],
+        more: <SportsMatchOption>[],
+      );
+    }
+    if (!mounted) return;
+    setState(() {
+      _result = result;
+      _searching = false;
+    });
+  }
+
+  List<SportsChannelGroup> get _queue => [
+    for (final o in _result?.match ?? const <SportsMatchOption>[]) o.group,
+    for (final o in _result?.more ?? const <SportsMatchOption>[]) o.group,
+  ];
+
+  IptvChannel _withOrigin(SportsChannel sc) {
+    final c = sc.channel;
+    return IptvChannel(
+      channelNumber: c.channelNumber,
+      name: c.name,
+      url: c.url,
+      logoUrl: c.logoUrl,
+      group: c.group,
+      duration: c.duration,
+      contentType: c.contentType,
+      attributes: {...c.attributes, 'source_playlist_id': sc.sourceId},
+      httpHeaders: c.httpHeaders,
+    );
+  }
+
+  Future<void> _play(SportsChannel target) async {
+    final list = <SportsChannel>[];
+    final urls = <String>{};
+    for (final g in _queue.take(300)) {
+      if (urls.add(g.best.channel.url)) list.add(g.best);
+    }
+    var index = list.indexWhere((c) => c.channel.url == target.channel.url);
+    if (index < 0) {
+      list.insert(0, target);
+      index = 0;
+    } else {
+      list[index] = target;
+    }
+    final channels = [for (final c in list) _withOrigin(c)];
+    final ch = target.channel;
+    await VideoPlayerLauncher.push(
+      context,
+      VideoPlayerLaunchArgs(
+        videoUrl: ch.url,
+        title: ch.name,
+        subtitle: widget.request.heading,
+        channelName: ch.name,
+        channelNumber: ch.channelNumber,
+        showChannelName: true,
+        viewMode: PlaylistViewMode.sorted,
+        iptvChannels: channels,
+        iptvStartIndex: index,
+        iptvContentType: 'live',
+        iptvSourceId: target.sourceId,
+        iptvSourceName: target.sourceName,
+        httpHeaders: ch.playbackHeaders,
+      ),
+    );
+  }
+
+  Future<void> _pickSource(SportsChannelGroup g) async {
+    if (g.variants.length < 2) {
+      await _play(g.best);
+      return;
+    }
+    final picked = await showModalBottomSheet<SportsChannel>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => _SourceSheet(title: g.displayName, options: g.variants),
+    );
+    if (picked != null && mounted) await _play(picked);
+  }
+
+  String _time(DateTime t) {
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Theme(
+      data: _SportsHubScreenState._hubTheme(context),
+      child: Builder(
+        builder: (context) => Scaffold(
+          backgroundColor: IptvStyleTokens.spotlight.bg,
+          body: SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _header(context),
+                if (_searching) const LinearProgressIndicator(minHeight: 2),
+                Expanded(child: _body(context)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _header(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    final r = widget.request;
+    final start = r.start;
+    final sub = <String>[
+      if (r.league.isNotEmpty) r.league,
+      if (start != null) _time(start),
+      _searching ? 'Searching your channels and guide…' : 'Best stream first',
+    ].join('  ·  ');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Back',
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+          const SizedBox(width: 4),
+          Icon(_sportIcon(r.sport), color: cs.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  r.heading,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: t.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                Text(
+                  sub,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: t.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(BuildContext context) {
+    final result = _result;
+    if (result == null) {
+      return const _Message(
+        icon: Icons.manage_search_rounded,
+        title: 'Looking for the match…',
+        body: 'Checking the guide and the channel names of your playlists.',
+      );
+    }
+    if (result.match.isEmpty && result.more.isEmpty) {
+      return const _Message(
+        icon: Icons.search_off_rounded,
+        title: 'No channel found',
+        body:
+            'Neither the guide nor the channel names of your playlists mention '
+            'this match, and no channel of this sport was found.',
+      );
+    }
+    final t = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    Widget section(String text) => Padding(
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+      child: Text(
+        text,
+        style: t.labelLarge?.copyWith(
+          color: cs.onSurfaceVariant,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.8,
+        ),
+      ),
+    );
+    var first = true;
+    Widget row(SportsMatchOption o, {required bool isMatch}) {
+      final g = o.group;
+      final best = g.best;
+      final p = o.programme;
+      final now = DateTime.now();
+      final live = p != null && p.airsAt(now);
+      final detail = <String>[
+        if (p != null) '${_time(p.start)}  ${p.title}',
+        best.sourceName,
+        if (g.variants.length > 1) '${g.variants.length} streams',
+      ].join('  ·  ');
+      final autofocus = first;
+      first = false;
+      return _HubCard(
+        autofocus: autofocus,
+        onTap: () => _play(best),
+        onLongPress: () => _pickSource(g),
+        child: Row(
+          children: [
+            _Logo(url: best.channel.logoUrl, fallback: _sportIcon(widget.request.sport)),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    g.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    detail,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            if (live) ...[
+              const _Pill('LIVE', bg: Color(0xFFE53935), fg: Colors.white),
+              const SizedBox(width: 6),
+            ],
+            if (isMatch && o.teamHits >= 2) ...[
+              _Pill('MATCH', bg: cs.primaryContainer, fg: cs.onPrimaryContainer),
+              const SizedBox(width: 6),
+            ],
+            _QualityPill(best),
+          ],
+        ),
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        if (result.match.isNotEmpty) ...[
+          section('SHOWING THIS MATCH'),
+          for (final o in result.match) row(o, isMatch: true),
+        ] else if (!_searching)
+          section('THE GUIDE DOESN\'T NAME THIS MATCH — CHANNELS OF THIS LEAGUE'),
+        if (result.more.isNotEmpty) ...[
+          if (result.match.isNotEmpty) section('MORE CHANNELS'),
+          for (final o in result.more) row(o, isMatch: false),
+        ],
+      ],
     );
   }
 }

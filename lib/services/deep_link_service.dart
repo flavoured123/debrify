@@ -38,6 +38,9 @@ class DeepLinkService {
   // Callback function to handle Stremio addon URLs
   Future<void> Function(String manifestUrl)? onStremioAddonReceived;
 
+  // "Find this match" links from a TV launcher: debrify://sports/match?...
+  Future<void> Function(Uri uri)? onSportsLinkReceived;
+
   // Track recently processed links to avoid duplicates
   final Map<String, DateTime> _recentlyProcessedMagnets = {};
   final Map<String, DateTime> _recentlyProcessedUrls = {};
@@ -238,7 +241,8 @@ class DeepLinkService {
     if (!_profileMayDispatch ||
         (onMagnetLinkReceived == null &&
             onUrlShared == null &&
-            onStremioAddonReceived == null)) {
+            onStremioAddonReceived == null &&
+            onSportsLinkReceived == null)) {
       return;
     }
     if (ProfileRuntime.isProfileCommitted) {
@@ -267,7 +271,8 @@ class DeepLinkService {
           'stremio',
           'http',
           'https',
-        }.contains(uri.scheme);
+        }.contains(uri.scheme) ||
+        (uri.scheme == 'debrify' && uri.host == 'sports');
   }
 
   /// Process shared files and extract text/URLs
@@ -297,7 +302,9 @@ class DeepLinkService {
     }
     debugPrint('Received deep link scheme=${uri.scheme}');
 
-    if (uri.scheme == 'magnet') {
+    if (uri.scheme == 'debrify' && uri.host == 'sports') {
+      _handleSportsUri(uri);
+    } else if (uri.scheme == 'magnet') {
       _handleMagnetUri(uri);
     } else if (uri.scheme == 'stremio') {
       _handleStremioUri(uri);
@@ -306,6 +313,24 @@ class DeepLinkService {
       if (uri.path.endsWith('manifest.json')) {
         _handleStremioManifestUrl(uri.toString());
       }
+    }
+  }
+
+  /// A match to find in the IPTV channels. The same link twice within a few
+  /// seconds (a launcher's double delivery) opens it once.
+  void _handleSportsUri(Uri uri) {
+    final key = uri.toString();
+    final now = DateTime.now();
+    final last = _recentlyProcessedUrls[key];
+    if (last != null && now.difference(last) < const Duration(seconds: 5)) {
+      return;
+    }
+    _recentlyProcessedUrls[key] = now;
+    final handler = onSportsLinkReceived;
+    if (handler != null) {
+      unawaited(handler(uri));
+    } else {
+      debugPrint('No sports link handler registered');
     }
   }
 

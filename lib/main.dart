@@ -69,6 +69,8 @@ import 'models/sidebar_configuration.dart';
 import 'services/secret_vault.dart';
 import 'services/play_loader_style.dart';
 import 'services/storage_service.dart';
+import 'services/iptv_sports/sports_match.dart';
+import 'screens/iptv/sports_hub_screen.dart';
 import 'services/tv_hero_artwork_quality_controller.dart';
 import 'services/tv_playback_recovery.dart';
 import 'services/tvos_top_shelf_service.dart';
@@ -2273,6 +2275,34 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
           ),
         );
       }
+    };
+
+    // "Find this match" from a TV launcher (Free My TV's Sports hub): the
+    // channels showing it, best stream first.
+    deepLinkService.onSportsLinkReceived = (uri) async {
+      if (!mounted) return;
+      if (!_allowsProfileFeature(ProfileFeature.iptv)) {
+        _showPolicyDeniedSnack();
+        return;
+      }
+      final request = SportsMatchRequest.fromUri(uri);
+      if (request == null) return;
+      final playlists = await StorageService.getIptvPlaylists(
+        forSettings: false,
+      );
+      if (!mounted) return;
+      if (playlists.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Add an IPTV playlist first.')),
+        );
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              SportsMatchScreen(playlists: playlists, request: request),
+        ),
+      );
     };
 
     // Initialize the service

@@ -57,6 +57,9 @@ env:
   MOD_FILES: >-
     lib/services/iptv_sports/sports_catalog.dart
     lib/services/iptv_sports/sports_service.dart
+    lib/services/iptv_sports/sports_match.dart
+    lib/services/deep_link_service.dart
+    lib/main.dart
     lib/screens/iptv/sports_hub_screen.dart
     lib/widgets/iptv/iptv_results_view.dart
     lib/widgets/iptv/iptv_filters.dart
