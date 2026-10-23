@@ -1264,7 +1264,7 @@ class _HeroTrailerLayerState extends State<_HeroTrailerLayer> {
                 enabled: true,
                 imageBlurSigma: 0,
                 videoBlurSigma: 0,
-                startDelay: const Duration(milliseconds: 300),
+                startDelay: TrailerTiming.heroDelay,
                 ambientVolume: widget.volume,
                 onPlayingChanged: _onPlaying,
               ),
@@ -1458,7 +1458,7 @@ class _SpotlightIptvCardPreviewState extends State<SpotlightIptvCardPreview> {
         videoBlurSigma: 0,
         // The short dwell filters a pointer sweep / held DPAD move without
         // making a deliberate card preview feel late.
-        startDelay: const Duration(milliseconds: 300),
+        startDelay: TrailerTiming.heroDelay,
         ambientVolume: widget.ambientVolume,
         onPlaybackFailed: _onPlaybackFailed,
         firstFrameTimeout: StremioIptvService.isStremioChannelUrl(channel.url)
@@ -1644,7 +1644,7 @@ class _HeroLiveLayerState extends State<_HeroLiveLayer> {
                 live: true,
                 imageBlurSigma: 0,
                 videoBlurSigma: 0,
-                startDelay: const Duration(milliseconds: 300),
+                startDelay: TrailerTiming.heroDelay,
                 ambientVolume: widget.volume,
                 onPlayingChanged: _onPlaying,
                 onPlaybackFailed: widget.onPlaybackFailed,

@@ -16660,6 +16660,10 @@ class AndroidTvTorrentPlayerActivity : AppCompatActivity() {
             // Announce our audio session to system effect apps (default: off)
             systemAudioEffectsEnabled = playerPreferences
                 .getBoolean("player_system_audio_effects", false)
+            nativeAudioRouting.forcePassthrough = playerPreferences
+                .getBoolean("player_audio_passthrough", false)
+            nativeAudioRouting.forceDecode = playerPreferences
+                .getBoolean("player_audio_force_ffmpeg", false)
 
             displayMatchMode = TvContentDisplayMatchMode.fromStorage(
                 playerPreferences.getString(

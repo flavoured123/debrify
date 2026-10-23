@@ -107,6 +107,7 @@ class _ExternalPlayerSettingsPageState
   bool _systemAudioEffects = false; // Android only, opt-in
   bool _tvosForceSoftwareDecode = false; // Apple TV only, opt-in
   bool _audioPassthrough = false; // Android only, opt-in
+  bool _audioForceFfmpeg = false; // Android TV native player only
   bool _appleMultichannel = false; // tvOS/iOS only, opt-in
   bool _tvosForceStereo = false; // tvOS diagnostics
   bool _tvosLegacyAudioOutput = false; // tvOS diagnostics
@@ -151,6 +152,7 @@ class _ExternalPlayerSettingsPageState
   final FocusNode _systemAudioEffectsFocusNode = FocusNode();
   final FocusNode _tvosForceSwDecodeFocusNode = FocusNode();
   final FocusNode _audioPassthroughFocusNode = FocusNode();
+  final FocusNode _audioForceFfmpegFocusNode = FocusNode();
   final FocusNode _appleMultichannelFocusNode = FocusNode();
   final FocusNode _tvosForceStereoFocusNode = FocusNode();
   final FocusNode _tvosLegacyAudioFocusNode = FocusNode();
@@ -180,6 +182,7 @@ class _ExternalPlayerSettingsPageState
   bool _systemAudioEffectsFocused = false;
   bool _tvosForceSwDecodeFocused = false;
   bool _audioPassthroughFocused = false;
+  bool _audioForceFfmpegFocused = false;
   bool _appleMultichannelFocused = false;
   bool _tvosForceStereoFocused = false;
   bool _tvosLegacyAudioFocused = false;
@@ -303,6 +306,12 @@ class _ExternalPlayerSettingsPageState
       if (!mounted) return;
       setState(() {
         _audioPassthroughFocused = _audioPassthroughFocusNode.hasFocus;
+      });
+    });
+    _audioForceFfmpegFocusNode.addListener(() {
+      if (!mounted) return;
+      setState(() {
+        _audioForceFfmpegFocused = _audioForceFfmpegFocusNode.hasFocus;
       });
     });
     _appleMultichannelFocusNode.addListener(() {
@@ -472,6 +481,7 @@ class _ExternalPlayerSettingsPageState
     _systemAudioEffectsFocusNode.dispose();
     _tvosForceSwDecodeFocusNode.dispose();
     _audioPassthroughFocusNode.dispose();
+    _audioForceFfmpegFocusNode.dispose();
     _appleMultichannelFocusNode.dispose();
     _tvosForceStereoFocusNode.dispose();
     _tvosLegacyAudioFocusNode.dispose();
@@ -612,6 +622,9 @@ class _ExternalPlayerSettingsPageState
       final tvosLegacyAudioOutput = PlatformUtil.isTvOS
           ? await StorageService.getTvosLegacyAudioOutput()
           : false;
+      final audioForceFfmpeg = Platform.isAndroid
+          ? await StorageService.getAudioForceFfmpeg()
+          : false;
       final audioPassthrough = Platform.isAndroid
           ? await StorageService.getAudioPassthroughEnabled()
           : false;
@@ -689,6 +702,7 @@ class _ExternalPlayerSettingsPageState
         _systemAudioEffects = systemAudioEffects;
         _tvosForceSoftwareDecode = tvosForceSoftwareDecode;
         _audioPassthrough = audioPassthrough;
+        _audioForceFfmpeg = audioForceFfmpeg;
         _appleMultichannel = appleMultichannel;
         _tvosForceStereo = tvosForceStereo;
         _tvosLegacyAudioOutput = tvosLegacyAudioOutput;
@@ -1189,6 +1203,11 @@ class _ExternalPlayerSettingsPageState
   Future<void> _setAudioPassthrough(bool enabled) async {
     setState(() => _audioPassthrough = enabled);
     await StorageService.setAudioPassthroughEnabled(enabled);
+  }
+
+  Future<void> _setAudioForceFfmpeg(bool enabled) async {
+    setState(() => _audioForceFfmpeg = enabled);
+    await StorageService.setAudioForceFfmpeg(enabled);
   }
 
   Future<void> _setAppleMultichannel(bool enabled) async {
@@ -2760,6 +2779,22 @@ class _ExternalPlayerSettingsPageState
               onChanged: _setAudioPassthrough,
               focusNode: _audioPassthroughFocusNode,
               isFocused: _audioPassthroughFocused,
+            ),
+            // FFmpeg decoding (Nuvio's "FFmpeg audio decoder"): every track
+            // as PCM, for TV speakers or a route that stays silent.
+            const SizedBox(height: 4),
+            _buildCheckboxTile(
+              context,
+              title: 'Decode all audio with FFmpeg',
+              subtitle:
+                  'Turns Dolby, DTS and TrueHD into plain multichannel '
+                  'sound in the app. Use it when the TV or soundbar stays '
+                  'silent or has no Dolby; overrides passthrough. Android TV '
+                  'player. Restart playback to apply.',
+              value: _audioForceFfmpeg,
+              onChanged: _setAudioForceFfmpeg,
+              focusNode: _audioForceFfmpegFocusNode,
+              isFocused: _audioForceFfmpegFocused,
             ),
           ],
 

@@ -22,6 +22,7 @@ class NativePlayerPreferences private constructor(private val values: JSONObject
             "subtitle_forced_only",
             "player_default_aspect_index_tv", "player_night_mode_index",
             "player_system_audio_effects", "content_display_match_mode",
+            "player_audio_passthrough", "player_audio_force_ffmpeg",
             "skip_segments_enabled", "skip_segment_provider",
         )
 

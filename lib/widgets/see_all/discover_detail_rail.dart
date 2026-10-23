@@ -514,7 +514,7 @@ class _DiscoverDetailRailState extends State<DiscoverDetailRail>
       return ytId;
     }, preferences: metadataPrefs);
     final ytId = candidates.firstOrNull?.key;
-    final allowBackup = metadataPrefs.provider(MetadataCategory.trailers) == MetadataPreferences.current || metadataPrefs.fallback;
+    const allowBackup = true; // IMDb MP4s whenever YouTube fails
     if (stale()) return; // moved on — the new title owns the pill now
     // Ambient rail backdrop: resolve at a low cap (small box, weak TV).
     var streams = (ytId != null && ytId.isNotEmpty)

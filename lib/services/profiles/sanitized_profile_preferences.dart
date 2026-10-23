@@ -18,6 +18,8 @@ abstract final class SanitizedProfilePreferences {
       case 'tv_keyboard_enabled':
       case 'player_start_portrait':
       case 'player_system_audio_effects':
+      case 'player_audio_passthrough':
+      case 'player_audio_force_ffmpeg':
       case 'subtitle_auto_sync_enabled':
       case 'subtitle_only_foreign_audio':
       case 'subtitle_forced_only':

@@ -58,6 +58,20 @@ env:
     lib/services/iptv_sports/sports_catalog.dart
     lib/services/iptv_sports/sports_service.dart
     lib/services/iptv_sports/sports_match.dart
+    lib/models/poster_override.dart
+    lib/models/stremio_addon.dart
+    lib/services/trailer_timing.dart
+    lib/widgets/hero_trailer_backdrop.dart
+    lib/widgets/home/spotlight_card_trailer.dart
+    lib/widgets/see_all/discover_detail_rail.dart
+    lib/screens/merged_series_detail_screen.dart
+    lib/screens/collections/collection_folder_screen.dart
+    lib/screens/settings/discover_settings_page.dart
+    lib/screens/settings/home_page_settings_page.dart
+    lib/screens/settings/external_player_settings_page.dart
+    lib/services/metadata_provider_service.dart
+    lib/services/stremio_service.dart
+    lib/services/profiles/sanitized_profile_preferences.dart
     lib/services/deep_link_service.dart
     lib/main.dart
     lib/screens/iptv/sports_hub_screen.dart

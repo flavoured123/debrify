@@ -3022,6 +3022,14 @@ class StremioService {
     // unknown. Use the metadata request's normal bounded timeout, and allow a
     // retry on failure rather than committing a timing-dependent progress key.
     if (needsMetadata && videos == null && previous != imdb) {
+      // A catalog addon that lists the show but won't (or can't) answer its
+      // meta request — common for list/collection addons — must not block a
+      // canonical IMDb/TMDB title: it keeps the standard episode identity,
+      // as Nuvio and Stremio do. Only non-canonical ids need the proof.
+      if (canonical || MediaIdentity.isImdb(imdb) || MediaIdentity.isNative(item.id)) {
+        await _rememberCatalogProgress(item, addon);
+        return item;
+      }
       throw StateError('Could not verify series episode identity. Please retry.');
     }
     final ids = (videos ?? const <Map<String, dynamic>>[])

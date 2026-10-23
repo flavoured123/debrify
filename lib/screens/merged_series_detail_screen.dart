@@ -1,6 +1,7 @@
 import '../widgets/metadata_franchise_rail.dart';
 import '../widgets/metadata_title_navigation.dart';
 import '../services/metadata_provider_service.dart';
+import '../services/trailer_timing.dart';
 import '../services/metadata_preferences_service.dart';
 import '../models/metadata_preferences.dart';
 import '../services/profiles/profile_runtime.dart';
@@ -1211,10 +1212,9 @@ class _MergedDetailScreenState extends State<MergedDetailScreen>
       );
       if (!mounted || !current()) return;
       _trailerCandidates = candidates;
-      _allowTrailerFallback =
-          prefs.provider(MetadataCategory.trailers) ==
-              MetadataPreferences.current ||
-          prefs.fallback;
+      // IMDb's own trailer MP4s whenever YouTube can't be resolved, whatever
+      // the metadata source: a still backdrop is never the better outcome.
+      _allowTrailerFallback = true;
       final ytId = candidates.firstOrNull?.key;
       if (ytId == null || ytId.isEmpty || !current()) return;
       setState(() => _trailerYtId = ytId);
@@ -1236,8 +1236,9 @@ class _MergedDetailScreenState extends State<MergedDetailScreen>
       // The backdrop refuses to autoplay under OS reduced-motion — skip the whole
       // pipeline (no resolve, no spinner) rather than spin forever waiting for a
       // player that will never start.
-      final reduceMotion =
-          MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+      final reduceMotion = TrailerTiming.reduceMotion(
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false,
+      );
       final willAutoplay = autoplay && !reduceMotion;
       setState(() {
         _trailerAutoplayEnabled = autoplay;

@@ -14,6 +14,7 @@ import '../services/debrify_image_cache.dart';
 import '../utils/platform_util.dart';
 import '../utils/tv_keys.dart';
 import 'trailer_engine.dart';
+import '../services/trailer_timing.dart';
 import 'serialized_trailer_engine.dart';
 import '../services/collection_focus_playback.dart';
 
@@ -161,7 +162,7 @@ class HeroTrailerBackdrop extends StatefulWidget {
 
   /// See [ambientVolume]. 70% — audible but under the UI, matching the Home
   /// hero trailer's default volume so both ambient surfaces sit at one level.
-  static const double _defaultAmbientVolume = 70;
+  static const double _defaultAmbientVolume = 100;
 
   /// Decode width for [sharpStill]. Matches the Home hero's own backdrop, which
   /// is the largest still this app already draws.
@@ -258,8 +259,9 @@ class HeroTrailerBackdropState extends State<HeroTrailerBackdrop>
   /// Last value handed to [onPlayingChanged]; only re-notify on real changes.
   bool _lastNotifiedPlaying = false;
 
-  bool get _reduceMotion =>
-      MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+  bool get _reduceMotion => TrailerTiming.reduceMotion(
+    MediaQuery.maybeOf(context)?.disableAnimations ?? false,
+  );
 
   bool _completed = false;
   bool get _canPlay =>

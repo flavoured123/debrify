@@ -14,6 +14,7 @@ import '../widgets/metadata_presentation_mixin.dart';
 import '../models/metadata_preferences.dart';
 import '../services/metadata_preferences_service.dart';
 import '../services/metadata_provider_service.dart';
+import '../services/trailer_timing.dart';
 import '../widgets/collections/collection_focus_art.dart';
 import '../widgets/collections/collection_focus_glow.dart';
 import '../widgets/see_all/discover_browsing_input.dart';
@@ -11662,10 +11663,7 @@ class _SearchScreenState extends State<SearchScreen>
           preferences: metadataPrefs,
         );
         final ytId = candidates.firstOrNull?.key;
-        final allowBackup =
-            metadataPrefs.provider(MetadataCategory.trailers) ==
-                MetadataPreferences.current ||
-            metadataPrefs.fallback;
+        const allowBackup = true;   // IMDb MP4s whenever YouTube fails
         if (!current()) return;
         // Ambient hero backdrop: resolve at a low cap (small region, weak TV).
         var streams = (ytId != null && ytId.isNotEmpty)

@@ -3,12 +3,14 @@ package com.debrify.app.audio
 import android.content.Context
 import android.os.Handler
 import android.util.Log
+import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.audio.AudioCapabilities
 import androidx.media3.exoplayer.audio.AudioOffloadSupport
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
@@ -21,10 +23,20 @@ import com.debrify.app.diagnostics.DiagnosticFileLog
 class NativeAudioRouting {
     @Volatile var requiresPcm: Boolean = false
         private set
+
+    /**
+     * "Audio passthrough" setting: send AC3 / E-AC3 (Atmos) / DTS to the HDMI
+     * receiver even when the route doesn't advertise it (common behind ARC or
+     * an AV receiver that Android reads as a TV).
+     */
+    @Volatile var forcePassthrough: Boolean = false
+
+    /** "Decode all audio with FFmpeg": PCM out, for TV speakers that stay silent on bitstreams. */
+    @Volatile var forceDecode: Boolean = false
     private var pendingRepreparePlayer: Player? = null
 
     fun update(nightMode: Boolean, systemEffects: Boolean, playbackSpeed: Float = 1f): Boolean {
-        val next = nightMode || systemEffects || playbackSpeed != 1f
+        val next = nightMode || systemEffects || playbackSpeed != 1f || forceDecode
         val changed = next != requiresPcm
         requiresPcm = next
         return changed
@@ -99,8 +111,11 @@ class NativeAudioRenderersFactory @JvmOverloads constructor(
     ) {
         // Only change AUDIO ordering. In particular, preserve the caller's
         // video-extension preference and its IPTV video codec selector.
-        val audioMode = if (extensionRendererMode == EXTENSION_RENDERER_MODE_OFF)
-            EXTENSION_RENDERER_MODE_OFF else EXTENSION_RENDERER_MODE_ON
+        val audioMode = when {
+            extensionRendererMode == EXTENSION_RENDERER_MODE_OFF -> EXTENSION_RENDERER_MODE_OFF
+            routing.forceDecode -> EXTENSION_RENDERER_MODE_PREFER   // FFmpeg first
+            else -> EXTENSION_RENDERER_MODE_ON
+        }
         super.buildAudioRenderers(context, audioMode, mediaCodecSelector,
             enableDecoderFallback, audioSink, eventHandler, eventListener, out)
     }
@@ -109,14 +124,32 @@ class NativeAudioRenderersFactory @JvmOverloads constructor(
         context: Context,
         enableFloatOutput: Boolean,
         enableAudioTrackPlaybackParams: Boolean,
-    ): AudioSink = EffectsAwareAudioSink(
-        DefaultAudioSink.Builder(context)
-            .setEnableFloatOutput(enableFloatOutput)
-            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-            .setAudioProcessorChain(DefaultAudioSink.DefaultAudioProcessorChain(*processors))
-            .build(),
-        routing,
-    )
+    ): AudioSink {
+        val builder = if (routing.forcePassthrough && !routing.forceDecode) {
+            // Fixed capabilities are only honoured by a context-less builder:
+            // the context one keeps re-reading what the route advertises.
+            @Suppress("DEPRECATION")
+            DefaultAudioSink.Builder().setAudioCapabilities(
+                AudioCapabilities(
+                    intArrayOf(
+                        C.ENCODING_PCM_16BIT, C.ENCODING_AC3, C.ENCODING_E_AC3,
+                        C.ENCODING_E_AC3_JOC, C.ENCODING_DTS,
+                    ),
+                    8,
+                ),
+            )
+        } else {
+            DefaultAudioSink.Builder(context)
+        }
+        return EffectsAwareAudioSink(
+            builder
+                .setEnableFloatOutput(enableFloatOutput)
+                .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                .setAudioProcessorChain(DefaultAudioSink.DefaultAudioProcessorChain(*processors))
+                .build(),
+            routing,
+        )
+    }
 }
 
 /** Effects and variable speed require decoded PCM instead of encoded bypass. */

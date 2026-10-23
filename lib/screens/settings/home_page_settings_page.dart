@@ -48,6 +48,7 @@ class _HomePageSettingsPageState extends State<HomePageSettingsPage> {
   bool _trailerAutoplayEnabled = false;
   bool _heroTrailerEnabled = true;
   bool _instantTrailers = TrailerTiming.instant;
+  bool _trailersIgnoreReduceMotion = !TrailerTiming.respectReduceMotion;
   bool _ambientTrailerAudioEnabled = true;
   int _ambientTrailerVolume = 70;
   bool _tvTrailerUnderlayEnabled = true;
@@ -181,7 +182,11 @@ class _HomePageSettingsPageState extends State<HomePageSettingsPage> {
     AnalyticsService.screenView('home_page_settings');
     _loadSettings();
     TrailerTiming.load().then((v) {
-      if (mounted && v != _instantTrailers) setState(() => _instantTrailers = v);
+      if (!mounted) return;
+      setState(() {
+        _instantTrailers = v;
+        _trailersIgnoreReduceMotion = !TrailerTiming.respectReduceMotion;
+      });
     });
   }
 
@@ -905,6 +910,22 @@ class _HomePageSettingsPageState extends State<HomePageSettingsPage> {
                         await TrailerTiming.setInstant(value);
                         if (!mounted) return;
                         setState(() => _instantTrailers = value);
+                        MainPageBridge.notifyHomeSettingsChanged();
+                      },
+                    ),
+                    SettingsToggleTile(
+                      icon: Icons.motion_photos_on_rounded,
+                      title: 'Trailers With System Animations Off',
+                      subtitle:
+                          'Keep playing trailers when the device has '
+                          'animations turned off (Windows "Animation effects", '
+                          'Android "Remove animations").',
+                      subtitleMaxLines: 2,
+                      value: _trailersIgnoreReduceMotion,
+                      onChanged: (value) async {
+                        await TrailerTiming.setRespectReduceMotion(!value);
+                        if (!mounted) return;
+                        setState(() => _trailersIgnoreReduceMotion = value);
                         MainPageBridge.notifyHomeSettingsChanged();
                       },
                     ),

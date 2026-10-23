@@ -317,7 +317,8 @@ class MetadataProviderService {
         }
       }
     } catch (_) {}
-    return prefs.fallback ? original() : [];
+    // The chosen source had no trailer: the addon's own one still beats none.
+    return original();
   }
 
   static StremioMeta fromTmdb(

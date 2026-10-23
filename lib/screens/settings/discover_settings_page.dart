@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/stremio_addon.dart';
 import '../../models/metadata_preferences.dart';
+import '../../models/poster_override.dart';
 import '../../services/analytics_service.dart';
 import '../../services/discover_prefs.dart';
 import '../../services/main_page_bridge.dart';
@@ -197,6 +198,75 @@ class _DiscoverSettingsPageState extends State<DiscoverSettingsPage> {
     MainPageBridge.discoverCardSettingsChanged?.call();
   }
 
+  /// The rating-poster URL pattern (Settings → Discover → Custom posters).
+  Future<void> _editPosterPattern() async {
+    final controller = TextEditingController(text: PosterOverride.pattern);
+    String? error;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Custom posters'),
+          content: SizedBox(
+            width: 560,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Paste the poster URL from a poster service (for example '
+                  'BetterPosters → "AIOMetadata / Other Addon" → Your Poster URL). '
+                  'It must contain {imdb_id} (or {tmdb_id}); {type} becomes '
+                  'movie or series. Leave empty to use the catalogs\' posters.',
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  maxLines: 3,
+                  minLines: 1,
+                  decoration: InputDecoration(
+                    hintText: 'https://…/{imdb_id}.jpg',
+                    errorText: error,
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(''),
+              child: const Text('Turn off'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final v = controller.text.trim();
+                if (!PosterOverride.isValid(v)) {
+                  setLocal(() => error =
+                      'Needs an http(s) link with {imdb_id}, {tmdb_id} or {id}');
+                  return;
+                }
+                Navigator.of(ctx).pop(v);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (result == null) return;
+    await PosterOverride.setPattern(result);
+    if (!mounted) return;
+    setState(() {});
+    MainPageBridge.notifyHomeSettingsChanged();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -255,6 +325,14 @@ class _DiscoverSettingsPageState extends State<DiscoverSettingsPage> {
                       subtitle: 'Display available ratings on posters',
                       value: _showRatings,
                       onChanged: _setShowRatings,
+                    ),
+                    SettingsTile(
+                      icon: Icons.image_outlined,
+                      title: 'Custom posters',
+                      subtitle: PosterOverride.pattern.isEmpty
+                          ? 'Off — posters from the catalogs. Paste a rating-poster URL (BetterPosters, RPDB…)'
+                          : PosterOverride.pattern,
+                      onTap: _editPosterPattern,
                     ),
                     SettingsToggleTile(
                       key: const ValueKey('discover-show-titles'),

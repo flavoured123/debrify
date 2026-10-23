@@ -1701,6 +1701,10 @@ public class TorboxTvPlayerActivity extends AppCompatActivity {
             nightModeIndex = Math.max(0, Math.min(nightModeIndex, nightModeGains.length - 1));
             systemAudioEffectsEnabled = playerPreferences
                     .getBoolean("player_system_audio_effects", false);
+            nativeAudioRouting.setForcePassthrough(playerPreferences
+                    .getBoolean("player_audio_passthrough", false));
+            nativeAudioRouting.setForceDecode(playerPreferences
+                    .getBoolean("player_audio_force_ffmpeg", false));
 
             displayMatchMode = TvContentDisplayMatchMode.Companion.fromStorage(
                     playerPreferences.getString(

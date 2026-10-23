@@ -1,3 +1,4 @@
+import 'poster_override.dart';
 import 'media_identity.dart';
 import 'dart:convert';
 
@@ -157,7 +158,18 @@ class StremioMeta {
   final String name;
 
   /// Poster image URL
-  final String? poster;
+  final String? _poster;
+
+  /// The poster to show: the user's rating-poster pattern when one is set
+  /// (Settings → Discover → Custom posters), else the catalog's own.
+  String? get poster =>
+      (type == 'folder'
+          ? null
+          : PosterOverride.urlFor(id: id, imdbId: imdbId, type: type)) ??
+      _poster;
+
+  /// The catalog's own poster, ignoring any custom pattern.
+  String? get catalogPoster => _poster;
 
   /// Background image URL
   final String? background;
@@ -209,7 +221,7 @@ class StremioMeta {
     this.imdbId,
     required this.type,
     required this.name,
-    this.poster,
+    String? poster,
     this.background,
     this.description,
     this.year,
@@ -220,7 +232,7 @@ class StremioMeta {
     this.trailerYtId,
     this.logo,
     this.addedAtMs,
-  });
+  }) : _poster = poster;
 
   /// Create a copy with a source addon attached.
   StremioMeta withCustomSeriesIdentity(StremioAddon addon) => StremioMeta(
@@ -228,7 +240,7 @@ class StremioMeta {
     imdbId: CustomSeriesIdentity(addon.portableConfigurationKey, id).id,
     type: type,
     name: name,
-    poster: poster,
+    poster: _poster,
     background: background,
     description: description,
     year: year,
@@ -246,7 +258,7 @@ class StremioMeta {
     imdbId: imdbId,
     type: type,
     name: name,
-    poster: poster,
+    poster: _poster,
     background: background,
     description: description,
     year: year,
@@ -447,7 +459,7 @@ class StremioMeta {
       if (imdbId != null) 'imdb_id': imdbId,
       'type': type,
       'name': name,
-      if (poster != null) 'poster': poster,
+      if (_poster != null) 'poster': _poster,
       if (background != null) 'background': background,
       if (description != null) 'description': description,
       if (year != null) 'year': year,

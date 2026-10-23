@@ -70,6 +70,8 @@ import 'services/secret_vault.dart';
 import 'services/play_loader_style.dart';
 import 'services/storage_service.dart';
 import 'services/iptv_sports/sports_match.dart';
+import 'models/poster_override.dart';
+import 'services/trailer_timing.dart';
 import 'screens/iptv/sports_hub_screen.dart';
 import 'services/tv_hero_artwork_quality_controller.dart';
 import 'services/tv_playback_recovery.dart';
@@ -606,6 +608,12 @@ Future<void> _continueApplicationStartup() async {
   // any crash-interrupted generation adoption, but still before ProfileGate
   // paints the recreated session.
   await TvPlaybackRecovery.initialize();
+  // Custom rating posters and trailer timing: read before the first catalog
+  // paints, so the first screen already shows the chosen posters.
+  try {
+    await PosterOverride.load();
+    await TrailerTiming.load();
+  } catch (_) {}
   // These initializers may touch profile-sensitive state and therefore start
   // only after the immutable runtime mode and active scope are installed.
   unawaited(AnalyticsService.init());

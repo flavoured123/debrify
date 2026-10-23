@@ -221,6 +221,11 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
         (desktop && size.width >= 600);
   }
 
+  /// One list's own grid: the styled title wall, except for a list opened
+  /// from a Spotlight row's arrow, which gets the plain full poster grid.
+  bool get _styledTab =>
+      _styledCollectionList && !(_spotlight && widget.sourceKey != null);
+
   bool get _styledCollectionList =>
       !_touchCategories &&
       _supportsCollectionStyles &&
@@ -277,7 +282,9 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
   /// The folder's lists, narrowed to the selected source when opening a list.
   List<CollectionCatalogSource> get _enabledSources => [
     for (final s in _folder.sources)
-      if (widget.sourceKey == null || s.key == widget.sourceKey || _spotlight)
+      if (widget.sourceKey == null ||
+          s.key == widget.sourceKey ||
+          (_spotlight && widget.sourceKey == null))
         s,
   ];
 
@@ -371,7 +378,9 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
           ? CollectionFolderLayout.tabs
           : switch (candidate.viewMode?.toUpperCase()) {
               'TABBED_GRID' => CollectionFolderLayout.tabs,
-              'FOLLOW_LAYOUT' || 'ROWS' => CollectionFolderLayout.rows,
+              'ROWS' => CollectionFolderLayout.rows,
+              // FOLLOW_LAYOUT (Nuvio's default) means "use the app setting":
+              // it used to force rows, so Tabbed folders never applied.
               _ => layout,
             };
       if (refreshCollection) {
@@ -944,7 +953,7 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
       return;
     }
     if (_tabs) {
-      if (_styledCollectionList) {
+      if (_styledTab) {
         _tvTitlesKey.currentState?.focusFirst();
       } else {
         _tabGridKey.currentState?.focusFirst();
@@ -1424,7 +1433,10 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
 
   /// Tabs layout: the selected list as a full poster grid.
   Widget _buildTab() {
-    if (_spotlight && _rails.isNotEmpty) return _buildSpotlight();
+    // A single list opened from a row's arrow is a full grid, not rows again.
+    if (_spotlight && _rails.isNotEmpty && widget.sourceKey == null) {
+      return _buildSpotlight();
+    }
     final r = _tabRail;
     if (r == null) return _buildEmpty();
     if (r.loadingInitial) {
@@ -1442,7 +1454,7 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
       }
       return SkeletonPosterGrid(isTelevision: widget.isTelevision);
     }
-    if (_styledCollectionList) {
+    if (_styledTab) {
       return _styledTitles(
         items,
         loadingMore: r.loadingMore,
@@ -1660,12 +1672,31 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
           ),
         );
       }
+      final listRail = rail;
+      final listRow = row;
+      // A "See all" card closes every row, so a remote or a controller (which
+      // can't reach the heading's arrow) opens the whole list too.
+      if (listRail != null && widget.sourceKey == null && items.isNotEmpty) {
+        nodes.add(_spotlightNodes.putIfAbsent('$id:all', () => FocusNode()));
+        cards.add(
+          SpotlightCard(
+            title: 'See all',
+            subtitle: listRail.title,
+            shape: SpotlightCardShape.wide,
+            onOpen: () => unawaited(_openList(listRail, listRow)),
+          ),
+        );
+      }
       shelves.add(
         SpotlightShelf(
           id: id,
           title: rail?.title ?? 'All titles',
           items: cards,
           nodes: nodes,
+          // The heading's arrow (Nuvio-style): the whole list as a grid.
+          onSeeAll: listRail == null || widget.sourceKey != null
+              ? null
+              : () => unawaited(_openList(listRail, listRow)),
         ),
       );
     }

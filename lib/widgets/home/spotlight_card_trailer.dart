@@ -79,11 +79,7 @@ class _SpotlightCardTrailerState extends State<SpotlightCardTrailer> {
               preferVp9: false,
             );
       if (!_current) return;
-      if ((streams == null || !streams.hasPlayable) &&
-          imdb != null &&
-          (prefs.provider(MetadataCategory.trailers) ==
-                  MetadataPreferences.current ||
-              prefs.fallback)) {
+      if ((streams == null || !streams.hasPlayable) && imdb != null) {
         streams = await ImdbTrailerService.resolveTrailer(imdb, maxHeight: 480);
       }
       if (!_current || _failed || streams == null || !streams.hasPlayable) return;

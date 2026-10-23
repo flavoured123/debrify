@@ -996,7 +996,7 @@ class StorageService {
     AmbientTrailerSurface surface,
   ) async {
     final prefs = await ProfilePreferences.instance();
-    final v = prefs.getInt(_ambientTrailerKeyFor(surface, 'volume')) ?? 70;
+    final v = prefs.getInt(_ambientTrailerKeyFor(surface, 'volume')) ?? 100;
     return v.clamp(10, 100);
   }
 
@@ -9294,6 +9294,17 @@ class StorageService {
   /// device instead of decoding to PCM (AUDIO_FIDELITY_PLAN.md). Default
   /// false — passthrough is fail-loud on routes that misreport support,
   /// so only the user can turn it on.
+  /// Android TV native player: decode every audio track with FFmpeg to PCM.
+  static Future<bool> getAudioForceFfmpeg() async {
+    final prefs = await ProfilePreferences.instance();
+    return prefs.getBool('player_audio_force_ffmpeg') ?? false;
+  }
+
+  static Future<void> setAudioForceFfmpeg(bool enabled) async {
+    final prefs = await ProfilePreferences.instance();
+    await prefs.setBool('player_audio_force_ffmpeg', enabled);
+  }
+
   static Future<bool> getAudioPassthroughEnabled() async {
     final prefs = await ProfilePreferences.instance();
     return prefs.getBool(_audioPassthroughKey) ?? false;
