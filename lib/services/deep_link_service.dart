@@ -265,8 +265,8 @@ class DeepLinkService {
 
   static bool _isSupportedExternalValue(String value) {
     final uri = Uri.tryParse(value);
-    return uri != null &&
-        const <String>{
+    if (uri == null) return false;
+    return const <String>{
           'magnet',
           'stremio',
           'http',
