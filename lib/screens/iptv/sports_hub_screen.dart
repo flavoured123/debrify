@@ -13,8 +13,10 @@ import '../../models/iptv_playlist.dart';
 import '../../models/playlist_view_mode.dart';
 import '../../services/iptv_sports/sports_catalog.dart';
 import '../../services/iptv_sports/sports_match.dart';
+import '../../services/iptv_sports/sports_scores.dart';
 import '../../services/iptv_sports/sports_service.dart';
 import '../../services/video_player_launcher.dart';
+import '../../utils/tv_keys.dart';
 import '../../widgets/iptv/styles/iptv_style.dart';
 
 enum _HubTab { live, upcoming, channels }
@@ -37,6 +39,9 @@ class _SportsHubScreenState extends State<SportsHubScreen> {
   _HubTab _tab = _HubTab.live;
   String? _sportFilter;
 
+  /// ESPN live scores (cricket, football), independent of the guide.
+  List<LiveScore> _scores = const [];
+
   /// Upcoming tab: show one day only (0 = today … 6). Null = every day.
   int? _dayFilter;
   int _run = 0;
@@ -50,7 +55,9 @@ class _SportsHubScreenState extends State<SportsHubScreen> {
     // Keeps "live now" / progress bars honest without re-reading the guide.
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
+      unawaited(_loadScores());
     });
+    unawaited(_loadScores());
     unawaited(_bootstrap());
   }
 
@@ -59,6 +66,123 @@ class _SportsHubScreenState extends State<SportsHubScreen> {
     _clock?.cancel();
     _run++;
     super.dispose();
+  }
+
+  Future<void> _loadScores() async {
+    final scores = await SportsScores.load();
+    if (mounted) setState(() => _scores = scores);
+  }
+
+  List<LiveScore> get _visibleScores => [
+    for (final s in _scores)
+      if (_sportFilter == null || _sportFilter == s.sport) s,
+  ];
+
+  Future<void> _openScore(LiveScore score) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SportsMatchScreen(
+          playlists: widget.playlists,
+          request: score.toRequest(),
+        ),
+      ),
+    );
+  }
+
+  /// "Live scores" strip: every live match ESPN knows, guide or not.
+  Widget _scoresStrip(BuildContext context) {
+    final scores = _visibleScores;
+    if (scores.isEmpty) return const SizedBox.shrink();
+    final t = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 2),
+          child: Text(
+            'LIVE SCORES  ·  OK finds the channel',
+            style: t.labelMedium?.copyWith(
+              color: cs.onSurfaceVariant,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ),
+        SizedBox(
+          height: 128,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            itemCount: scores.length,
+            itemBuilder: (context, i) {
+              final s = scores[i];
+              Widget line(String name, String score) => Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: t.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  if (score.isNotEmpty)
+                    Text(
+                      score,
+                      style: t.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                ],
+              );
+              final when = s.live
+                  ? (s.detail.isEmpty ? 'LIVE' : s.detail)
+                  : s.start == null
+                  ? ''
+                  : '${s.start!.hour.toString().padLeft(2, '0')}:${s.start!.minute.toString().padLeft(2, '0')}';
+              return SizedBox(
+                width: 320,
+                child: _HubCard(
+                  onTap: () => _openScore(s),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(_sportIcon(s.sport), size: 14, color: cs.onSurfaceVariant),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              s.league,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: t.labelSmall?.copyWith(color: cs.onSurfaceVariant),
+                            ),
+                          ),
+                          if (s.live)
+                            const _Pill('LIVE', bg: Color(0xFFE53935), fg: Colors.white),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      line(s.home, s.homeScore),
+                      line(s.away, s.awayScore),
+                      const SizedBox(height: 2),
+                      Text(
+                        when,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: t.labelSmall?.copyWith(
+                          color: s.live ? const Color(0xFFFF6B6B) : cs.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _bootstrap() async {
@@ -243,7 +367,9 @@ class _SportsHubScreenState extends State<SportsHubScreen> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (ctx) => _SourceSheet(title: title, options: options),
+      builder: (ctx) => TvHeldKeyGuard(
+        child: _SourceSheet(title: title, options: options),
+      ),
     );
     if (picked != null && mounted) await _play(picked, queue: groups);
   }
@@ -589,10 +715,18 @@ class _SportsHubScreenState extends State<SportsHubScreen> {
     }
     switch (_tab) {
       case _HubTab.live:
-        return _withSoonColumn(
-          context,
-          now,
-          _eventList(context, now, live, upcomingStyle: false),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _scoresStrip(context),
+            Expanded(
+              child: _withSoonColumn(
+                context,
+                now,
+                _eventList(context, now, live, upcomingStyle: false),
+              ),
+            ),
+          ],
         );
       case _HubTab.upcoming:
         return _eventList(context, now, upcoming, upcomingStyle: true);
@@ -836,6 +970,21 @@ class _HubCard extends StatefulWidget {
 class _HubCardState extends State<_HubCard> {
   bool _focused = false;
 
+  // A remote's OK: press plays, HOLD opens the source sheet — once. Without
+  // this a held OK auto-repeats into the default activation shortcut and
+  // starts a player per repeat (several players stacked, Back that needs
+  // many presses, and stutter from the decoders fighting).
+  late final TvHoldOk _hold = TvHoldOk(
+    onTap: () => widget.onTap(),
+    onHold: () => (widget.onLongPress ?? widget.onTap)(),
+  );
+
+  @override
+  void dispose() {
+    _hold.reset();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -854,13 +1003,20 @@ class _HubCardState extends State<_HubCard> {
         ),
         child: Material(
           type: MaterialType.transparency,
-          child: InkWell(
+          child: Focus(
+            canRequestFocus: false,
+            skipTraversal: true,
+            onKeyEvent: (node, event) => isActivateOrSpaceKey(event.logicalKey)
+                ? _hold.handle(event)
+                : KeyEventResult.ignored,
+            child: InkWell(
             autofocus: widget.autofocus,
             borderRadius: radius,
             onTap: widget.onTap,
             onLongPress: widget.onLongPress,
             onSecondaryTap: widget.onLongPress,
             onFocusChange: (v) {
+              if (!v) _hold.reset();
               setState(() => _focused = v);
               if (v) {
                 Scrollable.ensureVisible(
@@ -874,6 +1030,7 @@ class _HubCardState extends State<_HubCard> {
               padding: const EdgeInsets.all(12),
               child: widget.child,
             ),
+          ),
           ),
         ),
       ),
@@ -1893,7 +2050,9 @@ class _SportsMatchScreenState extends State<SportsMatchScreen> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (ctx) => _SourceSheet(title: g.displayName, options: g.variants),
+      builder: (ctx) => TvHeldKeyGuard(
+        child: _SourceSheet(title: g.displayName, options: g.variants),
+      ),
     );
     if (picked != null && mounted) await _play(picked);
   }

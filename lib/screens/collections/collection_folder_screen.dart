@@ -226,6 +226,9 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
   /// from a Spotlight row's arrow, which gets the plain full poster grid.
   bool get _ratingPosters => PosterOverride.pattern.isNotEmpty;
 
+  /// Titles per list row on TV before its "See all" card.
+  static const int _tvRowLimit = 20;
+
   bool get _styledTab =>
       _styledCollectionList && !(_spotlight && widget.sourceKey != null);
 
@@ -1557,7 +1560,14 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
     for (var row = 0; row < count; row++) {
       final rail = merged == null ? _rails[row] : null;
       final id = rail?.source.key ?? 'all';
-      final items = _sorted(merged ?? _displayItems(rail!.items));
+      final allItems = _sorted(merged ?? _displayItems(rail!.items));
+      // A remote can't reach a row's heading arrow, and a row that pages
+      // forever never reaches its end: on TV each list row stops at
+      // [_tvRowLimit] titles and ends in a "See all" card (Nuvio-style).
+      final capRow = widget.isTelevision && rail != null && widget.sourceKey == null;
+      final items = capRow && allItems.length > _tvRowLimit
+          ? allItems.sublist(0, _tvRowLimit)
+          : allItems;
       if (rail != null &&
           !rail.loadingInitial &&
           !rail.loadingMore &&
@@ -1693,7 +1703,9 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
           SpotlightCard(
             title: 'See all',
             subtitle: listRail.title,
-            shape: SpotlightCardShape.wide,
+            shape: _ratingPosters
+                ? SpotlightCardShape.poster
+                : SpotlightCardShape.wide,
             onOpen: () => unawaited(_openList(listRail, listRow)),
           ),
         );
@@ -1731,6 +1743,10 @@ class _CollectionFolderScreenState extends State<CollectionFolderScreen> {
       onLoadMoreRow: (row) {
         if (merged != null) {
           _loadMoreAll();
+        } else if (widget.isTelevision &&
+            widget.sourceKey == null &&
+            _rails[row].items.length >= _tvRowLimit) {
+          return; // the row is full; "See all" holds the rest
         } else if (_rails[row].loadingInitial) {
           _loadRail(_rails[row], _reqToken);
         } else {

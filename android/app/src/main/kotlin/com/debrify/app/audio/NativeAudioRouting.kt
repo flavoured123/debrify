@@ -125,7 +125,18 @@ class NativeAudioRenderersFactory @JvmOverloads constructor(
         enableFloatOutput: Boolean,
         enableAudioTrackPlaybackParams: Boolean,
     ): AudioSink {
-        val builder = if (routing.forcePassthrough && !routing.forceDecode) {
+        // Force only when the route advertises no bitstream at all (some ARC
+        // and AVR chains): a route that does report formats keeps its own
+        // list, so TrueHD / DTS-HD it supports still go out untouched.
+        val routeHasBitstream = try {
+            @Suppress("DEPRECATION")
+            val caps = AudioCapabilities.getCapabilities(context)
+            caps.supportsEncoding(C.ENCODING_AC3) || caps.supportsEncoding(C.ENCODING_E_AC3) ||
+                caps.supportsEncoding(C.ENCODING_DOLBY_TRUEHD) || caps.supportsEncoding(C.ENCODING_DTS)
+        } catch (e: RuntimeException) {
+            true
+        }
+        val builder = if (routing.forcePassthrough && !routing.forceDecode && !routeHasBitstream) {
             // Fixed capabilities are only honoured by a context-less builder:
             // the context one keeps re-reading what the route advertises.
             @Suppress("DEPRECATION")
@@ -133,7 +144,8 @@ class NativeAudioRenderersFactory @JvmOverloads constructor(
                 AudioCapabilities(
                     intArrayOf(
                         C.ENCODING_PCM_16BIT, C.ENCODING_AC3, C.ENCODING_E_AC3,
-                        C.ENCODING_E_AC3_JOC, C.ENCODING_DTS,
+                        C.ENCODING_E_AC3_JOC, C.ENCODING_DTS, C.ENCODING_DTS_HD,
+                        C.ENCODING_DOLBY_TRUEHD,
                     ),
                     8,
                 ),

@@ -58,6 +58,7 @@ env:
     lib/services/iptv_sports/sports_catalog.dart
     lib/services/iptv_sports/sports_service.dart
     lib/services/iptv_sports/sports_match.dart
+    lib/services/iptv_sports/sports_scores.dart
     lib/models/poster_override.dart
     lib/widgets/see_all/see_all_poster_grid.dart
     lib/services/youtube_service.dart
